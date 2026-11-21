@@ -54,11 +54,32 @@ bd -C "$B" show "$TASK_ID"                                          # 回读确�
 
 ## 2. 三方交叉核对
 
-读检查点 `$CKPT/<task_id>.md`，然后在 `worktree` 路径下核对。命令里的 `<worktree>` 是占位符，换成真实路径；检查点里 `worktree` 为空时，用**当前所在的代码仓**：
+读检查点 `$CKPT/<task_id>.md`，**先在检查点里定出「该去哪个目录核对现场」**，再动手核对。一个工作区可能有好几个仓，站错仓就会把「正常的另一个仓」误判成现场不一致。
 
 ```bash
-REPO="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)"
+# 1) 并行任务：检查点写了 worktree，且目录还在
+# 2) 单线任务：worktree 为空，用检查点的 repo
+# 3) repo 明确写了 none：当时不在任何 git 仓里，跳过 Git 核对
+# 4) 老检查点没有 repo 字段：只能按当前目录判断
+WT="$(sed -n 's/^worktree:[[:space:]]*//p' "$CKPT/<task_id>.md" | head -n 1 | tr -d '\r')"
+RP="$(sed -n 's/^repo:[[:space:]]*//p'     "$CKPT/<task_id>.md" | head -n 1 | tr -d '\r')"
+
+if [ -n "$WT" ] && [ -d "$WT" ]; then
+  HERE="$WT"
+elif [ -n "$WT" ]; then
+  echo "[HANDOFF_GAP] 检查点写了 worktree，但目录不存在：$WT"
+  echo "先确认并行分支是否已合并；不要默默换到别的仓继续"
+  HERE=""
+elif [ -n "$RP" ] && [ "$RP" != none ]; then
+  HERE="$RP"
+elif [ "$RP" = none ]; then
+  HERE=""
+else
+  HERE="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)"
+fi
 ```
+
+`HERE` 与你当前所在的仓不是同一个时，**先确认自己有没有站错目录**，不要在错的仓里得出「现场不一致」的结论。`HERE` 为空表示这份检查点本来就没有 Git 现场，跳过下面两步提交/工作树核对。
 
 **文件头核对**
 
@@ -68,6 +89,7 @@ REPO="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)"
 | `task_id` | 与手上的 `<id>` 完全一致 | 停手 |
 | `checkpoint_rev` | 是正整数 | 缺失或不是数字 → 文件被截断过，停手 |
 | `mode` | 正常交棒为 `HANDOFF_READY`；主动接管可以是 `ACTIVE` | `ACTIVE` 说明没有最终快照：按 Git 现场恢复，「下一步」可能过时；对不上就报 `[HANDOFF_GAP]` |
+| `repo` | 绝对路径，或 `none`（当时不在任何仓里） | 路径在本机不存在 → 换机器或换盘了：按当前所在的仓重新核对，并把这个差异写进检查点；不许当作一致 |
 
 **ID 核对**
 检查点 YAML 里的 `task_id` 必须与手上的 `<id>` 完全一致。
@@ -75,7 +97,7 @@ REPO="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)"
 **提交核对**
 
 ```bash
-git -C "<worktree>" rev-parse HEAD
+git -C "$HERE" rev-parse HEAD
 ```
 
 与检查点 `head` 比对。不一致就看 `git log -n 5 --oneline` 和 Beads `notes`，确认是不是前任留下的合法新提交。解释不了 → 停手报 `[HANDOFF_GAP]`。
@@ -83,7 +105,7 @@ git -C "<worktree>" rev-parse HEAD
 **工作树核对**
 
 ```bash
-git -C "<worktree>" status --short
+git -C "$HERE" status --short
 ```
 
 逐项对检查点的 `dirty_files` 与 `untracked_files`。`git status --short` 里前两列是 `??` 的算未跟踪，其余算已修改。

@@ -5,7 +5,7 @@
 一次接入产出的东西：
 
 - 工作区根的 `AGENTS.local.md`（本机路由，不入库）
-- `<数据家>/<工作区名>/{store,checkpoints,kb,backups,worktrees}`
+- `<数据家>/<工作区名>/{store,checkpoints,kb,backups,worktrees}` 和归属标记 `.skein-scope`
 - `kb` 独立 git 仓 + 首版 `INDEX.md` / `current.md` + 一次提交
 - 可选：任务库 `bd init`
 
@@ -39,9 +39,12 @@ D="$DATA/$NAME"
 mkdir -p "$DATA"
 DATA="$(cd "$DATA" && pwd -P)"
 D="$DATA/$NAME"
+
+# pwd -P 在 Windows 下给 /c/...，原生程序读不了；写进文件前转成 C:/...
+wp() { command -v cygpath >/dev/null 2>&1 && cygpath -m "$1" || printf '%s' "$1"; }
 ```
 
-两条硬约束，命中就停：
+三条硬约束，命中就停：
 
 ```bash
 # 1) 数据家不许落在任何 git 工作树里
@@ -52,6 +55,15 @@ fi
 if [ -f "$D/kb/INDEX.md" ] && [ ! -f "$SCOPE/AGENTS.local.md" ]; then
   echo "[HANDOFF_GAP] $D 已有知识库但没有路由，先确认是不是同一个工作区"; exit 1
 fi
+# 3) 归属标记：数据目录只有一个主人，同名工作区不许共用
+MARKER="$D/.skein-scope"
+if [ -f "$MARKER" ]; then
+  OWNER="$(head -n 1 "$MARKER" | tr -d '\r')"
+  [ "$OWNER" = "$(wp "$SCOPE")" ] || [ "$OWNER" = "$SCOPE" ] \
+    || { echo "[HANDOFF_GAP] $D 属于 $OWNER，不是 $(wp "$SCOPE")，换一个 --data"; exit 1; }
+elif [ -d "$D" ] && [ -n "$(find "$D" -mindepth 1 -print -quit 2>/dev/null)" ]; then
+  echo "[HANDOFF_GAP] $D 已有内容但没有归属标记，先确认它是不是别的同名工作区"; exit 1
+fi
 ```
 
 ## 2. 建目录
@@ -59,17 +71,14 @@ fi
 ```bash
 mkdir -p "$D"/{store,checkpoints,backups,worktrees}
 mkdir -p "$D/kb"/{facts,decisions,runbooks,journal,proposals,archive}
+
+# 归属标记：写下这个数据目录属于哪个工作区
+[ -f "$D/.skein-scope" ] || printf '%s\n' "$(wp "$SCOPE")" > "$D/.skein-scope"
 ```
 
 ## 3. 写 `AGENTS.local.md`
 
-已存在就**不动**，只核对五个键齐不齐。不存在才写。
-
-`pwd -P` 在 Windows 下给的是 `/c/...`，`bd`、`es`、`qmd` 是原生程序，读不了这种路径。**写进文件前必须转成 `C:/...`**：
-
-```bash
-wp() { command -v cygpath >/dev/null 2>&1 && cygpath -m "$1" || printf '%s' "$1"; }
-```
+已存在就**不动**，只核对五个键齐不齐。不存在才写。路径转换函数 `wp` 在第 1 步已经定义好，直接复用。
 
 ```bash
 LOCAL="$SCOPE/AGENTS.local.md"
@@ -185,10 +194,12 @@ fi
 | 库独立 | `git -C <KB> remote -v` | 无输出 |
 | 库已提交 | `git -C <KB> log --oneline` | 至少一条 |
 | 任务库 | `bd -C <STORE> list` | 不报错 |
+| 归属标记 | `cat <数据家>/<工作区名>/.skein-scope` | 等于工作区绝对路径 |
 
 ## 常见错误
 
 - **给每个 git 仓都建一个库。** 库是按工作区建的；子仓共享同一份，任务标题带 `[子仓名]` 区分
 - **在子目录又放一份 `AGENTS.local.md`。** 它会遮住工作区那份，技能向上找时就停了
 - **数据家放在仓里。** 会被提交、可能被推送
+- **两个同名工作区共用一个数据目录。** 比如 `D:/a/项目` 和 `E:/b/项目` 都叫「项目」。第 1 步的 `.skein-scope` 会拦住，报 GAP 后换一个 `--data` 即可，不要手工删标记
 - **让安装脚本顺手建库。** 脚本只复制技能，建库只走这里

@@ -22,6 +22,10 @@ kv() { sed -n "s/^$1:[[:space:]]*//p" "$LOCAL" | head -n 1 | tr -d '\r'; }
 B="$(kv store)"; CKPT="$(kv checkpoints)"
 [ -n "$CKPT" ] || { echo "[HANDOFF_GAP] 缺 checkpoints 键"; exit 1; }
 
+# 这次干活的实际仓。一个工作区可能有多个仓，接手方必须知道该去哪个仓核对现场
+REPO="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)"
+[ -n "$REPO" ] || REPO=none
+
 TASK_ID="<task_id>"                 # 换成真实 ID
 TARGET="$CKPT/$TASK_ID.md"
 mkdir -p "$CKPT"
@@ -67,6 +71,7 @@ checkpoint_rev: 1
 writer: <最后写入者，审计用，不是 owner>
 updated_at: <ISO 8601 带时区>
 mode: ACTIVE
+repo: <实际仓根绝对路径；当时不在任何仓里写 none>
 worktree: <绝对路径>
 branch: <分支名>
 head: "<完整 HEAD SHA>"
@@ -104,6 +109,8 @@ untracked_files: []
 - [ ] 风险已说明
 ```
 
+`repo` 和 `worktree` 分工：`worktree` 是这次真正动代码的目录（并行时是独立工作树），`repo` 是它属于哪个仓。`worktree` 为空时接手方去 `repo` 里核对现场；`repo` 是 `none` 说明当时不在任何仓里，接手方不许虚构 HEAD。
+
 `mode` 四种取值：
 
 - 正常交棒：`ACTIVE` → 交出前 `HANDOFF_READY` → 接手方核对后 `RECEIVED` → 开始执行「下一步」第 1 条改回 `ACTIVE` → 验收通过、任务关闭后 `CLOSED`
@@ -119,7 +126,7 @@ untracked_files: []
 
 ## 写完自检
 
-- [ ] 头部六个字段齐全，`head` 是完整 SHA 不是缩写
+- [ ] 头部字段齐全（`schema_version` 到 `untracked_files`），`head` 是完整 SHA 不是缩写，`repo` 不是空的
 - [ ] `checkpoint_rev` 比上次大 1，回读一致
 - [ ] 「下一步」第 1 条能直接执行，不用再判断
 - [ ] 「不要重复」里至少有一条避坑记录（没有就写"无"）

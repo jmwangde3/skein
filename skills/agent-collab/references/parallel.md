@@ -25,7 +25,9 @@ KB="$(kv kb)"
 WT_ROOT="$(kv worktree_root)"
 [ -n "$STORE" ] && [ -n "$CKPT" ] && [ -n "$KB" ] && [ -n "$WT_ROOT" ] \
   || { echo "[HANDOFF_GAP] 缺 store / checkpoints / kb / worktree_root 键"; exit 1; }
-WT="$WT_ROOT/$(basename "$REPO")-worktrees"
+# 不同父目录下的同名仓会算出同一个目录，用仓路径的短 hash 区分
+hash8() { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; }
+WT="$WT_ROOT/$(basename "$REPO")-$(printf '%s' "$REPO" | hash8 | cut -c1-8)-worktrees"
 ```
 
 路径全部来自**工作区根**的 `AGENTS.local.md`（从当前目录向上找到的第一个），缺文件或缺键就停，**不要用默认值或推测路径补齐**。`worktree` 开在当前所在的代码仓上，不是整个工作区。

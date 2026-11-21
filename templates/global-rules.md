@@ -10,7 +10,7 @@
 
 ## 私有路径
 
-- 本机路径只从项目根 `AGENTS.local.md` 读（`store` / `checkpoints` / `kb` / `worktree_root`）。
+- 本机路径只从**工作区根**（从当前目录向上找到的第一个）`AGENTS.local.md` 读（`store` / `checkpoints` / `kb` / `worktree_root`）。
 - 文件缺失或缺键就报 `[HANDOFF_GAP]` 并停下，禁止推测路径，禁止把绝对路径写进规则或技能正文。
 
 ## 记忆与证据

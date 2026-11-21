@@ -39,7 +39,7 @@ A 自愿交棒（写 `HANDOFF_READY` 再 `unclaim`）仍然更完整、更省事
 
 返场方（A→B→A 的 A）**严禁用旧对话记忆**。按 `references/receive.md` 走：
 
-`bd show <id>` 核归属 → 读检查点 → 核 `git status --short` + `git rev-parse HEAD` → 只按「下一步」第 1 条开工
+`bd show <id>` 核归属 → 读检查点 → 在检查点 `worktree`（为空则 `repo`；两者都没有说明当时不在仓里）核对 `git status --short` + `git rev-parse HEAD` → 只按「下一步」第 1 条开工
 
 主动接管拿到的可能是 `mode: ACTIVE` 的半截快照，**「下一步」可能已经过时**，先对着 Git 现场核实再执行。
 

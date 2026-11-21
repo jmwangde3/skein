@@ -35,7 +35,9 @@ REPO="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)"
 STORE="$(kv store)"
 WT_ROOT="$(kv worktree_root)"
 [ -n "$STORE" ] && [ -n "$WT_ROOT" ] || { echo "[HANDOFF_GAP] 缺 store / worktree_root 键"; exit 1; }
-WT="$WT_ROOT/$(basename "$REPO")-worktrees"
+# 不同父目录下的同名仓会算出同一个目录，用仓路径的短 hash 区分
+hash8() { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; }
+WT="$WT_ROOT/$(basename "$REPO")-$(printf '%s' "$REPO" | hash8 | cut -c1-8)-worktrees"
 
 # 1. 拆两个互不依赖的任务
 bd -C "$STORE" create "子任务 A" -t task
