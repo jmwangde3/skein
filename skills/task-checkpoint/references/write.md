@@ -7,9 +7,17 @@
 下面命令里的 `<task_id>` 是占位符，执行前换成真实值。**直接复制会报 `No such file or directory`**——bash 会把 `<xx>` 当成"从这个文件读输入"。
 
 ```bash
-PROJ="${PROJ:-$(git rev-parse --show-toplevel 2>/dev/null)}"
-LOCAL="$PROJ/AGENTS.local.md"
-[ -f "$LOCAL" ] || { echo "[HANDOFF_GAP] 缺 $LOCAL"; exit 1; }
+# 从当前目录向上找作用域根：第一个含 AGENTS.local.md 的目录
+SCOPE=""
+d="$(pwd -P)"
+while :; do
+  if [ -f "$d/AGENTS.local.md" ]; then SCOPE="$d"; break; fi
+  p="$(dirname "$d")"
+  if [ "$p" = "$d" ]; then break; fi
+  d="$p"
+done
+[ -n "$SCOPE" ] || { echo "[HANDOFF_GAP] 没找到 AGENTS.local.md（应在工作区根）"; exit 1; }
+LOCAL="$SCOPE/AGENTS.local.md"
 kv() { sed -n "s/^$1:[[:space:]]*//p" "$LOCAL" | head -n 1 | tr -d '\r'; }
 B="$(kv store)"; CKPT="$(kv checkpoints)"
 [ -n "$CKPT" ] || { echo "[HANDOFF_GAP] 缺 checkpoints 键"; exit 1; }

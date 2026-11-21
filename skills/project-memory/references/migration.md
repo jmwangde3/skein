@@ -21,11 +21,11 @@
 ## 搬完之后必做
 
 ```bash
-# K 是 AGENTS.local.md 里 kb 指向的路径，见 setup.md 第 0 步
-git -C "$K" -c core.autocrlf=false add -A
-git -C "$K" -c core.autocrlf=false commit -m "kb: 从旧库迁移"
+# KB 从 AGENTS.local.md 的 kb 键读，见 SKILL.md 的「库在哪」
+git -C "$KB" -c core.autocrlf=false add -A
+git -C "$KB" -c core.autocrlf=false commit -m "kb: 从旧库迁移"
 OLD="旧文件名"     # 占位符，换成真实的旧文件名
-rg -n -F "$OLD" "$K/INDEX.md" "$K/current.md" "$K/facts" "$K/decisions" "$K/runbooks"   # 确认没有断链
+rg -n -F "$OLD" "$KB/INDEX.md" "$KB/current.md" "$KB/facts" "$KB/decisions" "$KB/runbooks"   # 确认没有断链
 ```
 
 `archive/` 里的旧文件名引用不用改，那是历史原文；但要确认 `archive/README.md` 说清了「按文件名找，别信链接」。

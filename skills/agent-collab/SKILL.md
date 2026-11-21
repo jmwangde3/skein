@@ -16,22 +16,34 @@ description: 两个或以上 Agent 要在同一个项目上并行推进独立任
 下面命令里的 `<id-a>` / `<id-b>` 是占位符，执行前换成真实任务 ID。直接复制会报 `No such file or directory`——bash 会把 `<xx>` 当成读文件。
 
 ```bash
-PROJ="${PROJ:-$(git rev-parse --show-toplevel 2>/dev/null)}"
-LOCAL="$PROJ/AGENTS.local.md"
-[ -f "$LOCAL" ] || { echo "[HANDOFF_GAP] 缺 $LOCAL"; exit 1; }
+# 工作区根：从当前目录向上找第一个含 AGENTS.local.md 的目录
+SCOPE=""
+d="$(pwd -P)"
+while :; do
+  if [ -f "$d/AGENTS.local.md" ]; then SCOPE="$d"; break; fi
+  p="$(dirname "$d")"
+  if [ "$p" = "$d" ]; then break; fi
+  d="$p"
+done
+[ -n "$SCOPE" ] || { echo "[HANDOFF_GAP] 没找到 AGENTS.local.md（应在工作区根）"; exit 1; }
+LOCAL="$SCOPE/AGENTS.local.md"
 kv() { sed -n "s/^$1:[[:space:]]*//p" "$LOCAL" | head -n 1 | tr -d '\r'; }
+
+# 并行作用在"当前所在的代码仓"，不是整个工作区
+REPO="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)"
+[ -n "$REPO" ] || { echo "[HANDOFF_GAP] 当前目录不在 git 仓里，开不了 worktree"; exit 1; }
 STORE="$(kv store)"
 WT_ROOT="$(kv worktree_root)"
 [ -n "$STORE" ] && [ -n "$WT_ROOT" ] || { echo "[HANDOFF_GAP] 缺 store / worktree_root 键"; exit 1; }
-WT="$WT_ROOT/$(basename "$PROJ")-worktrees"
+WT="$WT_ROOT/$(basename "$REPO")-worktrees"
 
 # 1. 拆两个互不依赖的任务
 bd -C "$STORE" create "子任务 A" -t task
 bd -C "$STORE" create "子任务 B" -t task
 
 # 2. 两个独立 worktree（不同路径 + 不同分支）
-git -C "$PROJ" worktree add -b feat/task-a "$WT/task-a" HEAD
-git -C "$PROJ" worktree add -b feat/task-b "$WT/task-b" HEAD
+git -C "$REPO" worktree add -b feat/task-a "$WT/task-a" HEAD
+git -C "$REPO" worktree add -b feat/task-b "$WT/task-b" HEAD
 
 # 3. 每个 worktree 复制私有路由并核对忽略生效
 for w in task-a task-b; do
@@ -64,17 +76,17 @@ BEADS_ACTOR=agent-b bd -C "$STORE" update "<id-b>" --claim
 ```bash
 # 1. 先合并：代码没进主分支，不许删 worktree
 BASE="${BASE:-main}"     # 换成分支真名
-git -C "$PROJ" checkout "$BASE"
-git -C "$PROJ" merge --no-ff feat/task-a
-git -C "$PROJ" merge --no-ff feat/task-b
+git -C "$REPO" checkout "$BASE"
+git -C "$REPO" merge --no-ff feat/task-a
+git -C "$REPO" merge --no-ff feat/task-b
 
 # 2. 合并成功后清目录
-git -C "$PROJ" worktree remove "$WT/task-a"
-git -C "$PROJ" worktree remove "$WT/task-b"
+git -C "$REPO" worktree remove "$WT/task-a"
+git -C "$REPO" worktree remove "$WT/task-b"
 
 # 3. skills-manager 装过才需要卸；手复制部署的直接删目录
 SM="${SM:-$(command -v skills-manager-cli || echo "$HOME/.skills-manager/bin/skills-manager-cli.exe")}"
-[ -x "$SM" ] && "$SM" projects undeploy --agent codex "$PROJ" agent-collab
+[ -x "$SM" ] && "$SM" projects undeploy --agent codex "$REPO" agent-collab
 ```
 
 `worktree remove` 遇到脏工作树会拒绝——那是在提醒你还有东西没合并，**不要用 `--force` 跳过**。

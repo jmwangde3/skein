@@ -3,20 +3,32 @@
 ## 路径常量
 
 ```bash
-PROJ="${PROJ:-$(git rev-parse --show-toplevel 2>/dev/null)}"
-LOCAL="$PROJ/AGENTS.local.md"
-[ -f "$LOCAL" ] || { echo "[HANDOFF_GAP] 缺 $LOCAL"; exit 1; }
+# 工作区根：从当前目录向上找第一个含 AGENTS.local.md 的目录
+SCOPE=""
+d="$(pwd -P)"
+while :; do
+  if [ -f "$d/AGENTS.local.md" ]; then SCOPE="$d"; break; fi
+  p="$(dirname "$d")"
+  if [ "$p" = "$d" ]; then break; fi
+  d="$p"
+done
+[ -n "$SCOPE" ] || { echo "[HANDOFF_GAP] 没找到 AGENTS.local.md（应在工作区根）"; exit 1; }
+LOCAL="$SCOPE/AGENTS.local.md"
 kv() { sed -n "s/^$1:[[:space:]]*//p" "$LOCAL" | head -n 1 | tr -d '\r'; }
+
+# 并行作用在"当前所在的代码仓"，不是整个工作区
+REPO="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)"
+[ -n "$REPO" ] || { echo "[HANDOFF_GAP] 当前目录不在 git 仓里，开不了 worktree"; exit 1; }
 STORE="$(kv store)"
 CKPT="$(kv checkpoints)"
 KB="$(kv kb)"
 WT_ROOT="$(kv worktree_root)"
 [ -n "$STORE" ] && [ -n "$CKPT" ] && [ -n "$KB" ] && [ -n "$WT_ROOT" ] \
   || { echo "[HANDOFF_GAP] 缺 store / checkpoints / kb / worktree_root 键"; exit 1; }
-WT="$WT_ROOT/$(basename "$PROJ")-worktrees"
+WT="$WT_ROOT/$(basename "$REPO")-worktrees"
 ```
 
-路径全部来自项目根 `AGENTS.local.md`，缺文件或缺键就停，**不要用默认值或推测路径补齐**。
+路径全部来自**工作区根**的 `AGENTS.local.md`（从当前目录向上找到的第一个），缺文件或缺键就停，**不要用默认值或推测路径补齐**。`worktree` 开在当前所在的代码仓上，不是整个工作区。
 
 ## 1. 开工
 
@@ -28,8 +40,8 @@ bd -C "$STORE" create "子任务 A" -t task
 bd -C "$STORE" create "子任务 B" -t task
 
 # 建 worktree（路径与分支都不同）
-git -C "$PROJ" worktree add -b feat/task-a "$WT/task-a" HEAD
-git -C "$PROJ" worktree add -b feat/task-b "$WT/task-b" HEAD
+git -C "$REPO" worktree add -b feat/task-a "$WT/task-a" HEAD
+git -C "$REPO" worktree add -b feat/task-b "$WT/task-b" HEAD
 
 # 私有路由复制到各 worktree，并确认忽略规则管得住它
 for w in task-a task-b; do
@@ -88,21 +100,21 @@ proposals/20261121-worktree-naming.md
 ```bash
 # 1. 先合并。集成分支真名以项目为准
 BASE="${BASE:-main}"
-git -C "$PROJ" checkout "$BASE"
-git -C "$PROJ" merge --no-ff feat/task-a
-git -C "$PROJ" merge --no-ff feat/task-b
+git -C "$REPO" checkout "$BASE"
+git -C "$REPO" merge --no-ff feat/task-a
+git -C "$REPO" merge --no-ff feat/task-b
 
 # 2. 确认两支都已进主分支（下面每条都要有输出）
-git -C "$PROJ" merge-base --is-ancestor feat/task-a "$BASE" && echo "task-a 已集成"
-git -C "$PROJ" merge-base --is-ancestor feat/task-b "$BASE" && echo "task-b 已集成"
+git -C "$REPO" merge-base --is-ancestor feat/task-a "$BASE" && echo "task-a 已集成"
+git -C "$REPO" merge-base --is-ancestor feat/task-b "$BASE" && echo "task-b 已集成"
 
 # 3. 合并成功后才清目录
-git -C "$PROJ" worktree remove "$WT/task-a"
-git -C "$PROJ" worktree remove "$WT/task-b"
-git -C "$PROJ" worktree prune
+git -C "$REPO" worktree remove "$WT/task-a"
+git -C "$REPO" worktree remove "$WT/task-b"
+git -C "$REPO" worktree prune
 
 SM="${SM:-$(command -v skills-manager-cli || echo "$HOME/.skills-manager/bin/skills-manager-cli.exe")}"
-[ -x "$SM" ] && "$SM" projects undeploy --agent codex "$PROJ" agent-collab
+[ -x "$SM" ] && "$SM" projects undeploy --agent codex "$REPO" agent-collab
 ```
 
 `worktree remove` 遇到脏工作树会拒绝。先确认那些改动是要保留还是要丢弃——**不要用 `--force` 跳过判断**。冲突停下时同样不要 `merge --abort` 之后假装没发生，把两边内容贴出来交人工。

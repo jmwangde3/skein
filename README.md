@@ -7,13 +7,13 @@ Skein（读作"斯肯"，/skeɪn/）是英文里"一绞线"的意思。一次任
 
 这套东西**不是软件**，是四份写给 AI 助手看的工作规程，外加几个模板和安装脚本。你把它们放进 AI 的"技能目录"，AI 在对应场景就会自己翻出来照做。
 
-**最短路径（只装不部署，3 分钟）：**
+**最短路径（只装技能，3 分钟）：**
 
 1. 装 [Git for Windows](https://git-scm.com/download/win)
 2. 右上角 Code → Download ZIP，解压
 3. 打开 Git Bash，执行 `bash install/install.sh --client all`
 
-装完重启 AI 客户端即可。要接到具体项目上，看[第 5 节](#5-部署接到你的项目上)。
+装完重启 AI 客户端即可。要建库，看[第 5 节](#5-建库给一个工作区接上)。
 
 ---
 
@@ -23,7 +23,7 @@ Skein（读作"斯肯"，/skeɪn/）是英文里"一绞线"的意思。一次任
 2. [基于哪些需求做的](#2-基于哪些需求做的)
 3. [能做到什么，做不到什么](#3-能做到什么做不到什么)
 4. [安装](#4-安装)
-5. [部署：接到你的项目上](#5-部署接到你的项目上)
+5. [建库：给一个工作区接上](#5-建库给一个工作区接上)
 6. [怎么使用](#6-怎么使用)
 7. [日常问题怎么解决](#7-日常问题怎么解决)
 8. [文件都放在哪](#8-文件都放在哪)
@@ -157,9 +157,19 @@ powershell -ExecutionPolicy Bypass -File install\install.ps1
 
 `-ExecutionPolicy Bypass` 只是让这一次运行放行，不改系统设置。
 
-脚本做两件事：把**全局技能**（只有 `task-checkpoint`）复制到上面那些目录；如果你同时给了 `--project`，再把另外三个**项目级技能**复制到那个项目里的 `.claude/skills` 之类目录。**已存在的不会覆盖**，想覆盖加 `--force`（PowerShell 用 `-Force`）。
+脚本只做一件事：把**全局技能**（只有 `task-checkpoint`）复制到上面那些目录；给了 `--project` 再把另外三个**项目级技能**复制到那个目录下的 `.claude/skills` 之类位置。**它不建库、不碰数据目录。** 已存在的不会覆盖，想覆盖加 `--force`（PowerShell 用 `-Force`）。
 
-> 为什么分开：`task-checkpoint` 每个项目都要用，装全局；另外三个只在特定项目里才有意义，装全局会让不相干的项目也被它们触发，白占上下文。
+> 为什么分开：`task-checkpoint` 每个工作区都要用，装全局；另外三个只在特定工作区里才有意义，装全局会让不相干的项目也被它们触发，白占上下文。
+
+**做法 C：你已经用 skills-manager 管技能**
+
+那就不用跑上面的脚本，直接：
+
+```bash
+skills-manager projects deploy --agent codex "<工作区路径>" agent-handoff project-memory agent-collab
+```
+
+它建的是符号链接，改中心源即时生效。上面的 `install.sh` 会识别出符号链接并跳过，不会把链接拆成副本。
 
 **做法 B：手动复制（不想跑脚本就这样）**
 
@@ -189,7 +199,7 @@ skills/agent-collab      →  <项目>/.claude/skills/agent-collab
 
 装完重启客户端。多数客户端只在启动时扫描一次技能目录。
 
-**复制 vs 链接：** 脚本是复制，改本仓库的 `skills/` 不会自动同步。如果你想"改一处、各端立刻生效"，用 [skills-manager](https://github.com/xingkongliang/skills-manager) 部署——它建的是符号链接，`skills-manager projects deploy --agent codex <项目> agent-handoff` 这样按项目挂载。
+**复制 vs 链接：** 脚本是复制，改本仓库的 `skills/` 不会自动同步。如果你想"改一处、各端立刻生效"，用 [skills-manager](https://github.com/xingkongliang/skills-manager) 部署——它建的是符号链接，`skills-manager projects deploy --agent codex <工作区> agent-handoff project-memory agent-collab` 这样按工作区挂载。
 
 ### 4.2 档二：装任务库 Beads（强烈建议）
 
@@ -244,133 +254,67 @@ qmd collection add "<你的知识库路径>" --name skein-kb \
 
 ---
 
-## 5. 部署：接到你的项目上
+## 5. 建库：给一个工作区接上
 
-### 第 0 步：选一个"数据家"目录（最关键的一步）
+### 5.1 什么叫"工作区"
 
-规则只有一条：**不要放在代码仓里面。**
-
-原因很实际：代码仓以后可能要推到 GitHub，知识库里全是私有资料，放进去等于一起公开。
-
-推荐的两种放法：
+**一个目录 = 一个工作区，里面可以放好几个 git 仓。**
 
 ```
-D:\skein-data\<项目名>          # Windows
-~/skein-data/<项目名>           # macOS / Linux
+H:/AI工作区/ChatGPT测试区/     ← 工作区根：放 AGENTS.local.md
+├── wfa/                       ← 自己的 git 仓
+├── 别的项目/                   ← 另一个 git 仓
+└── 笔记/                       ← 不是 git 仓也行
 ```
 
-里面的结构（脚本会自动建）：
+库是**按工作区**建的，不是按仓建的。三个子项目共用一套任务库和知识库，任务标题带 `[子项目名]` 区分。
 
-```
-<数据家>/<项目名>/
-├── store/          任务库（Beads 的数据）
-├── checkpoints/    检查点，一任务一份
-├── kb/             知识库（一个独立 git 仓）
-│   ├── INDEX.md    目录：什么内容看哪个文件
-│   ├── current.md  现在到哪一步
-│   ├── facts/      事实（环境、版本、约定）
-│   ├── decisions/  决策（为什么这么定）
-│   ├── runbooks/   操作手册（下次照着做）
-│   ├── journal/    流水账
-│   ├── proposals/  别人想改知识库时先写这里
-│   └── archive/    归档
-└── backups/        备份
-```
+技能从当前目录**向上**找第一个 `AGENTS.local.md`，命中就停。所以子目录里不要再放第二份，会遮住工作区那份。
 
-### 第 1 步：一条命令建好
+### 5.2 建库：跟 AI 说一句话
 
-```bash
-cd /d/下载/skein
-bash install/install.sh --client all \
-  --project "D:/work/我的项目" \
-  --data "D:/skein-data"
-```
+在工作区根目录打开你的 AI 客户端，说：
 
-PowerShell 版：
+> **用 project-memory 给这个工作区建库，数据放 `D:/skein-data`**
 
-```powershell
-cd D:\下载\skein
-powershell -ExecutionPolicy Bypass -File install\install.ps1 -Client all `
-  -Project "D:\work\我的项目" -Data "D:\skein-data"
-```
+它会读 `project-memory/references/init.md`，按顺序做：
 
-它会做五件事，**已经存在的文件一律不覆盖**：
+1. 确认工作区根，扫一遍子目录有没有第二份 `AGENTS.local.md`（有就停下来问你）
+2. 建 `<数据家>/<工作区名>/{store,checkpoints,kb,backups,worktrees}`
+3. 写工作区根的 `AGENTS.local.md`（五个键）
+4. 只在工作区根**本身是 git 仓**时，才把它加进 `info/exclude`
+5. 建 `kb` 独立仓 + 首版 `INDEX.md` / `current.md` + 一次提交
+6. 装了 `bd` 就顺手 `bd init`
+7. 按验收表逐项核对
 
-1. 把全局技能（只有 `task-checkpoint`）装到各客户端
-2. 建好上面那套目录
-3. 生成项目里的 `AGENTS.local.md`（把路径填好）
-4. 把 `AGENTS.local.md` 加进 `.git/info/exclude`（永不提交）
-5. 给知识库 `git init`、写一版空的 `INDEX.md` / `current.md` 并提交
+**不需要手工贴任何东西**，也没有第二个脚本要跑。
 
-**它会替你挡两种错**：数据家目录选在代码仓里（会被提交、可能被推送）会直接拒绝；两个同名项目指向不同数据家时会拒绝，避免共用一个库。
+### 5.3 检查生成的路由
 
-### 第 2 步：检查 `AGENTS.local.md`
-
-打开项目根目录的这个文件，确认五个键都填对了：
+打开工作区根的 `AGENTS.local.md`，应该长这样：
 
 | 键 | 填什么 | 说明 |
 |---|---|---|
-| `project` | 项目名 | 一般就是文件夹名 |
-| `store` | 任务库路径 | 指向数据家里的 `store` |
-| `checkpoints` | 检查点目录 | 指向数据家里的 `checkpoints` |
-| `kb` | 知识库路径 | 指向数据家里的 `kb` |
+| `scope` | 工作区根绝对路径 | 就是放这个文件的目录 |
+| `store` | 任务库路径 | 整个工作区共用 |
+| `checkpoints` | 检查点目录 | 整个工作区共用 |
+| `kb` | 知识库路径 | 整个工作区共用 |
 | `worktree_root` | 并行工作目录的父目录 | 并行时才用 |
-| `backups`（可选） | 备份目录 | 技能不强制要求，留一个更稳 |
+| `backups`（可选） | 备份目录 | 技能不强制要求 |
 
-路径用**正斜杠** `/`，不要用反斜杠。Windows 也写 `D:/skein-data/我的项目`。
+路径用**正斜杠** `/`，Windows 也写 `D:/skein-data/我的工作区`。
 
 **这个文件是整套系统的总开关。** AI 找不到它，或者缺键，就会停下来报 `[HANDOFF_GAP]`，而不是瞎猜一个路径。这是故意的。
 
-### 第 3 步：在项目的 `AGENTS.md` 里加指针
-
-把下面这段贴进项目根目录的 `AGENTS.md`（没有就新建）：
-
-```markdown
-## Skein 协作
-
-- 本机路径只从 `AGENTS.local.md` 读五个键（project / store / checkpoints / kb / worktree_root）。
-  缺文件或缺键就报 `[HANDOFF_GAP]`，禁止推测路径。
-- 长任务用 `task-checkpoint` 落盘；换助手用 `agent-handoff`；
-  建库、检索、写回用 `project-memory`；只有并行才挂 `agent-collab`，结束就卸。
-- 任务状态只信 `bd -C <store> ...`。检查点不复制任务状态。
-- 知识库同一时刻只有一个写者，其他人写 `proposals/`。
-```
-
-### 第 4 步：验收（不是重做一遍）
-
-上面那条命令已经建好了任务库和知识库。这一步只确认，不要重复初始化：
-
-```bash
-# 知识库必须没有任何远程
-git -C "D:/skein-data/我的项目/kb" remote -v
-
-# 任务库能读就算成功；报错才需要手动 init
-bd -C "D:/skein-data/我的项目/store" list
-```
-
-只有一种情况需要你补做——**当时机器上还没装 `bd`**。装好 Beads 后补一次：
-
-```bash
-cd "D:/skein-data/我的项目/store"
-bd init --prefix ag --non-interactive --stealth --skip-agents
-```
-
-`bd init` 必须在目标目录里跑，不能用 `bd -C` 指过去——`-C` 只对已经存在的任务库有效。
-
-`--stealth` 让任务库不干扰你自己的 git 配置；`--skip-agents` 不往项目里塞它自己的说明文件。初始化时可能看到一条 `failed to update git exclude: not a git repository`，无害，可以忽略。
-
-知识库的**内容**（分类、事实、决策）不在这里做，让 AI 用 `project-memory` 整理——那是它的活。
-
-### 第 5 步：自检
-
-六条命令，全过才算装好：
+### 5.4 验收
 
 | 检查 | 命令 | 期望结果 |
 |---|---|---|
 | 全局技能 | `ls ~/.claude/skills` | 看到 `task-checkpoint`（另外三个**不该**在这里） |
-| 项目技能 | `ls <项目>/.claude/skills` | 看到 `agent-handoff`、`project-memory`、`agent-collab` |
-| 路由文件 | `cat <项目>/AGENTS.local.md` | 五个键都有值 |
-| 忽略生效 | `git -C <项目> check-ignore -v AGENTS.local.md` | 有一行输出（说明被忽略） |
+| 项目技能 | `ls <工作区>/.claude/skills` | 看到 `agent-handoff`、`project-memory`、`agent-collab` |
+| 路由文件 | `cat <工作区>/AGENTS.local.md` | 五个键都有值 |
+| 作用域唯一 | `find <工作区> -mindepth 2 -name AGENTS.local.md` | 无输出 |
+| 忽略生效 | 工作区是仓根时 `git -C <工作区> check-ignore -v AGENTS.local.md` | 有一行输出 |
 | 任务库能读 | `bd -C <store> list` | 不报错，可能为空 |
 | 知识库无远程 | `git -C <kb> remote -v` | **没有任何输出** |
 | 知识库已提交 | `git -C <kb> log --oneline` | 至少一条 |
@@ -525,8 +469,8 @@ skein/
 │   ├── agent-handoff/     接续
 │   ├── project-memory/    织存
 │   └── agent-collab/      并线
-├── templates/             模板：路由文件、项目指针、知识库首页
-├── install/               安装脚本（bash + PowerShell 两版）
+├── templates/             模板：本机路由文件、全局规则
+├── install/               技能安装脚本（两个平台各一版，只复制技能）
 └── LICENSE
 ```
 

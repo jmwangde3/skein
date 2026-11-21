@@ -5,8 +5,27 @@
 
 ## 1. 取得合法租约
 
+先把两个路径解析出来——**从当前目录向上找作用域根**，不要假设自己在仓根：
+
 ```bash
-bd -C "$B" show "<id>"
+SCOPE=""
+d="$(pwd -P)"
+while :; do
+  if [ -f "$d/AGENTS.local.md" ]; then SCOPE="$d"; break; fi
+  p="$(dirname "$d")"
+  if [ "$p" = "$d" ]; then break; fi
+  d="$p"
+done
+[ -n "$SCOPE" ] || { echo "[HANDOFF_GAP] 没找到 AGENTS.local.md（应在工作区根）"; exit 1; }
+kv() { sed -n "s/^$1:[[:space:]]*//p" "$SCOPE/AGENTS.local.md" | head -n 1 | tr -d '\r'; }
+B="$(kv store)"; CKPT="$(kv checkpoints)"
+[ -n "$CKPT" ] || { echo "[HANDOFF_GAP] 缺 checkpoints 键"; exit 1; }
+```
+
+任务库是**整个工作区共用**的，`B` 为空说明没配 Beads，走纯文件模式（见第 6 节）。
+
+```bash
+[ -n "$B" ] && bd -C "$B" show "<id>"
 ```
 
 | 看到什么 | 动作 |
@@ -35,7 +54,11 @@ bd -C "$B" show "$TASK_ID"                                          # 回读确�
 
 ## 2. 三方交叉核对
 
-读检查点 `<checkpoints>/<task_id>.md`（`<checkpoints>` 取自项目根 `AGENTS.local.md` 的 `checkpoints` 键，缺键即报 `[HANDOFF_GAP]`），然后在 `worktree` 路径下核对。命令里的 `<worktree>` 是占位符，换成真实路径；检查点里 `worktree` 为空时用项目根 `$PROJ`。
+读检查点 `$CKPT/<task_id>.md`，然后在 `worktree` 路径下核对。命令里的 `<worktree>` 是占位符，换成真实路径；检查点里 `worktree` 为空时，用**当前所在的代码仓**：
+
+```bash
+REPO="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)"
+```
 
 **文件头核对**
 
