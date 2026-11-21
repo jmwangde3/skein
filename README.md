@@ -84,6 +84,8 @@ AI 助手有一个绕不开的毛病：**它的记性只在一个窗口里有效
 
 | 你会看到的现象 | 背后发生的事 |
 |---|---|
+| 新助手第一次进这个项目，不用通读代码就能上手 | 每个 git 仓有一份 ≤4 KB 的项目档案：干什么、从哪进、怎么跑、细节在哪 |
+| 它不会把整个项目读一遍再动手 | 档案 + 检索阶梯，先读 2 KB 定位，只读用得着的那几处 |
 | 第二天说"读检查点接着干"，它不重复昨天的活 | 检查点里有"已完成 / 下一步 / 不要重复"三节 |
 | 新助手接手时先核对，而不是直接动手 | 核对任务归属、代码现状、检查点三样，对不上就停 |
 | 叫另一个助手接手，不用等前任整理 | 接手方自己读任务和现场，拿到归属就能干；前任不需要先写总结或释放 |
@@ -96,6 +98,9 @@ AI 助手有一个绕不开的毛病：**它的记性只在一个窗口里有效
 ### 做不到（先说清楚，避免误会）
 
 - **它不会替你写代码。** 它约束的是 AI 的工作方式，不是内容。
+- **项目档案不是自动更新的。** 入口或命令变了，要有人刷新；`HEAD` 变了但引用文件没变，不用动。
+- **档案可能有缺口。** 长期没动的仓只做简化建档，会标 `PARTIAL`；接手方看到它得先补，不能当成就绪。
+- **只跑脚本拿不到档案。** 脚本只建骨架，档案必须由 AI 读少量文件后写。
 - **它不替代 Git。** 版本管理还是 Git 的事。
 - **它不是云服务，不跨机器同步。** 想同步得自己加远程仓——但那等于把私有资料传出去，不建议。
 - **它不会自动解决"两个人都改了同一段"的语义冲突。** 同一文件不同段落 Git 能自动合，但合出来对不对，得有人复核。
@@ -271,13 +276,13 @@ H:/AI工作区/ChatGPT测试区/     ← 工作区根：放 AGENTS.local.md
 
 技能从当前目录**向上**找第一个 `AGENTS.local.md`，命中就停。所以子目录里不要再放第二份，会遮住工作区那份。
 
-### 5.2 建库：两条路，同一份实现
+### 5.2 建库：骨架靠脚本，档案靠 AI
 
 **路一，跟 AI 说一句话**（在工作区根目录打开客户端）：
 
 > **用 project-memory 给这个工作区建库，数据放 `D:/skein-data`**
 
-它会读 `project-memory/references/init.md`，找到技能里的 `scripts/init.sh` 并执行。
+它会读 `project-memory/references/init.md`：先跑技能里的 `scripts/init.sh` 建骨架，再**逐个 git 仓写一份项目档案**——这份档案才是让别的助手能直接接手的东西。
 
 **路二，自己敲命令**（不想让 AI 动手，或者没有能跑 shell 的客户端）：
 
@@ -287,7 +292,18 @@ bash ~/.claude/skills/project-memory/scripts/init.sh \
   --data "D:/skein-data"
 ```
 
-技能目录按你的客户端换（`~/.codex/skills`、`~/.workbuddy/skills` 等）。两条路跑的是**同一个脚本**，结果完全一样——不存在「AI 建的和手动建的规则不一样」这种事。
+技能目录按你的客户端换（`~/.codex/skills`、`~/.workbuddy/skills` 等）。
+
+**两条路结果不同，这是有意的。** 脚本只能读目录结构和 Git 元数据，读不出「这个仓解决什么问题、从哪进、怎么跑」。所以：
+
+| | 脚本 | AI 走完 init.md |
+|---|---|---|
+| 目录、路由、知识库骨架 | 有 | 有 |
+| 机械地图（目录名、最后提交） | 有 | 有 |
+| 项目档案索引 `projects/INDEX.md` | 有，全部标 `TODO` | 有，逐个改成 `READY` / `PARTIAL` |
+| 项目档案正文 | **没有** | **每个 git 仓一份** |
+
+只跑脚本 = 库能用，但新助手接手还得自己摸一遍。判断方法：`grep -c '| TODO |' <kb>/facts/projects/INDEX.md`，结果是 0 才算建完。
 
 脚本做的事：
 
@@ -297,7 +313,8 @@ bash ~/.claude/skills/project-memory/scripts/init.sh \
 4. 只在工作区根**本身是 git 仓**时，才把它加进 `info/exclude`
 5. 建 `kb` 独立仓 + 首版 `INDEX.md` / `current.md` + 一次提交
 6. 生成工作区地图 `kb/facts/workspace-map.md`（顶层不足 3 项就跳过）
-7. 装了 `bd` 就顺手 `bd init`，没装就告诉你以后怎么补
+7. 扫出所有 git 仓，建档案索引 `kb/facts/projects/INDEX.md`，每仓一行、状态 `TODO`
+8. 装了 `bd` 就顺手 `bd init`，没装就告诉你以后怎么补
 8. 打印验收用的四个路径
 
 **不需要手工贴任何东西。** 脚本可重复执行，已存在的目录、路由、知识库都不会被覆盖。
@@ -311,7 +328,50 @@ bash ~/.claude/skills/project-memory/scripts/init.sh \
 
 它不是当前事实，是某次扫描的快照；头部有生成时间，用前仍要核对目标目录和 Git HEAD。**不要手工改它**，重跑脚本会覆盖——要补说明写 `facts/workspace-notes.md`。
 
-### 5.3 检查生成的路由
+### 5.3 档案长什么样
+
+每个 git 仓一份，放在 `kb/facts/projects/`，硬上限 4 KB / 70 行：
+
+```markdown
+# wfa-review-20261119
+
+- 状态：READY
+- 仓库：wfa-review-20261119
+- 基线：a1b2c3d4e5f6... · main · 工作树 clean
+- 建档：2026-11-22 01:50
+
+## 定位
+
+浏览器扩展侧的对话转发工具，把网页会话转给本机 CLI。[文档]
+
+## 入口
+
+- `src/bridge.ts` — 消息桥接主入口 [源码]
+- `manifest.json` — 扩展声明与权限 [源码]
+
+## 运行验证
+
+- `npm test` — package.json 声明，未实测
+
+## 文档指针
+
+- `README.md` — 安装与用法；改配置格式前读
+- `AGENTS.md` — 项目约束；**改代码前必读**
+
+## 缺口
+
+- 没找到构建脚本，可能靠 `npm run build`，未核实
+```
+
+三条规则：
+
+- **每句话标来源**：`[源码]` 直接读到的、`[文档]` 文档里写的但没验证、`[推断]` 从命名猜的
+- **`READY` 只表示字段齐、来源明**，不表示命令跑通过
+- **不写源码片段、不抄 README 正文、不记任务状态**——那些分别是代码、原文档、Beads 的事
+
+索引在 `projects/INDEX.md`。接手时按相对路径找自己那一份，**只读那一份**。
+
+### 5.4 检查生成的路由
 
 打开工作区根的 `AGENTS.local.md`，应该长这样：
 
@@ -328,7 +388,7 @@ bash ~/.claude/skills/project-memory/scripts/init.sh \
 
 **这个文件是整套系统的总开关。** AI 找不到它，或者缺键，就会停下来报 `[HANDOFF_GAP]`，而不是瞎猜一个路径。这是故意的。
 
-### 5.4 验收
+### 5.5 验收
 
 | 检查 | 命令 | 期望结果 |
 |---|---|---|
@@ -340,6 +400,8 @@ bash ~/.claude/skills/project-memory/scripts/init.sh \
 | 任务库能读 | `bd -C <store> list` | 不报错，可能为空 |
 | 知识库无远程 | `git -C <kb> remote -v` | **没有任何输出** |
 | 知识库已提交 | `git -C <kb> log --oneline` | 至少一条 |
+| 项目档案索引 | `cat <kb>/facts/projects/INDEX.md` | 每个 git 仓一行，状态列有值 |
+| 档案已建完 | `grep -c '\| TODO \|' <kb>/facts/projects/INDEX.md` | `0`（不是 0 说明还有仓没建档） |
 
 再让 AI 试一句：**"读一下 AGENTS.local.md，告诉我 store 和 kb 分别在哪。"** 它能准确说出来，就说明路由通了。
 
@@ -489,7 +551,7 @@ skein/
 ├── skills/                四个技能本体
 │   ├── task-checkpoint/   打结
 │   ├── agent-handoff/     接续
-│   ├── project-memory/    织存（含建库 scripts/init.sh 与地图 scripts/map.sh）
+│   ├── project-memory/    织存（建库 init.sh、地图 map.sh、档案规则 brief.md）
 │   └── agent-collab/      并线
 ├── templates/             全局规则片段（贴进客户端全局规则用）
 ├── docs/backlog.md        记下但暂不做的需求

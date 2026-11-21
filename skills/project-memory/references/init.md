@@ -2,11 +2,11 @@
 
 这是**唯一**的建库入口。具体动作由技能目录里的 `scripts/init.sh` 完成——脚本跟着技能一起部署，不依赖机器上有没有 Skein 源码仓。
 
-## 两种用法，同一份实现
+## 两种用法，结果不同
 
-**用技能（推荐）**：在工作区根对 AI 说「用 project-memory 给这个工作区建库，数据放 `D:/skein-data`」。AI 读本文件，找到脚本并执行。
+**用技能（完整建库）**：在工作区根对 AI 说「用 project-memory 给这个工作区建库，数据放 `D:/skein-data`」。AI 读本文件，先跑脚本，再按「逐仓建档」把每个 git 仓写成一份档案。
 
-**自己跑**：在终端里执行同一条命令，技能目录换成你客户端的真实位置：
+**自己跑脚本（只有骨架）**：在终端里执行同一条命令，技能目录换成你客户端的真实位置：
 
 ```bash
 bash ~/.claude/skills/project-memory/scripts/init.sh \
@@ -14,7 +14,9 @@ bash ~/.claude/skills/project-memory/scripts/init.sh \
   --data "D:/skein-data"
 ```
 
-两条路结果完全一样，因为只有这一份实现。区别只是谁敲回车。
+脚本建目录、路由、知识库骨架、机械地图和档案索引，**但不写任何项目档案**——档案索引里每个仓都会停在 `TODO`。
+
+**两者不等价。** 脚本只能读文件系统和 Git 元数据，读不出「这个仓解决什么问题、从哪进、怎么跑」。这些必须由 agent 读少量文件后写。只跑脚本 = 库能用、但新 agent 接手仍需自己摸一遍。
 
 ## 先找到脚本
 
@@ -51,7 +53,8 @@ done
 6. 工作区根**本身是 git 仓**时，把 `AGENTS.local.md` 写进 `.git/info/exclude`
 7. `kb` 独立 `git init`，写首版 `INDEX.md` / `current.md`
 8. 生成工作区地图 `kb/facts/workspace-map.md`（顶层不足 3 项就跳过）
-9. 装了 `bd` 就 `bd init`，没装就提示怎么补
+9. 生成项目档案索引 `kb/facts/projects/INDEX.md`：每个 git 仓一行，状态全标 `TODO`
+10. 装了 `bd` 就 `bd init`，没装就提示怎么补
 
 ## 工作区地图
 
@@ -73,6 +76,58 @@ done
 - 单独刷新不用重跑整个建库：`bash <技能目录>/project-memory/scripts/map.sh --workspace <工作区>`
 
 地图是**快照，不是当前事实**。文件头写了生成时间；agent 要动手前仍要核对目标目录和 `git rev-parse HEAD`，冲突时以现场为准。
+
+## 逐仓建档（脚本做不了这一段）
+
+脚本跑完只是骨架。要让人能直接接手，还得给每个 git 仓写一份档案。
+
+规则、模板、上限、黑名单全在 `references/brief.md`，这里只说流程。
+
+### 顺序
+
+1. 读 `kb/facts/projects/INDEX.md`，取出所有状态为 `TODO` 的行
+2. 逐仓判断要不要读代码（分档规则见 `brief.md`）：
+   - 当前任务涉及这个仓 → 完整建档
+   - 工作树有未提交改动 → 完整建档
+   - 任一本地分支 90 天内有提交 → 完整建档
+   - 都不满足 → 简化建档，只写头部 + 定位 + 文档指针，状态 `PARTIAL`
+3. 完整建档按这个顺序读，**读到能填满字段就停，不要继续深挖**：
+   - `README.md`：前 60 行，找「是什么」和「怎么跑」
+   - `package.json` / `pyproject.toml` / `Makefile` / `Cargo.toml`：只取 scripts / test / build 相关键
+   - 目录结构：只看两层，不列全量
+   - 最多 3 个入口文件：只读开头 40 行，确认它是不是入口
+4. 写 `<仓名>.md.tmp` → 校验（必填字段、≤ 4 KB / 70 行）→ 改名为正式文件
+5. 改 `INDEX.md` 的状态与基线
+6. `git -C <kb> commit -m "kb: 建档 <仓名>"`
+
+### 预算
+
+- 单仓累计摘取 **不超过 8 KiB 文本**。超了就停，没读的部分写进「缺口」
+- 读大文件前先看行数；超过 400 行只读前 40 行 + 目录
+
+### 完成判据
+
+```bash
+grep -c '| TODO |' "$KB/facts/projects/INDEX.md"    # 应为 0
+```
+
+不为 0 就是「库已建、档案未建」。**接手方看到 `TODO` 或 `PARTIAL` 必须知道这不是就绪状态**：`TODO` 要现场摸，`PARTIAL` 要补缺口。
+
+### 中断了怎么办
+
+建到一半停下是正常的（上下文用完、用户走了）。恢复时**先看文件，再看索引**：
+
+- 索引写 `READY` 但文件不存在或字段不全 → 改回 `TODO`
+- 索引写 `TODO` 但文件完整 → 核对后改成真实状态
+- 有 `.tmp` 残留 → 删掉重写，不要续写
+
+细节在 `brief.md` 的「写入与中断恢复」。
+
+### 多仓工作区
+
+8 个仓就是 8 次循环，**每次独立写盘并提交**。不要攒到最后一起写——中途断掉会全丢。
+
+只建了常用的那个仓、其余仍是 `TODO`，是允许的中间状态，但要在 `current.md` 里写清「已建 X，未建 Y」。
 
 ## 它会拒绝的情况
 
@@ -99,6 +154,8 @@ done
 | 库已提交 | `git -C <kb> log --oneline` | 至少一条 |
 | 任务库 | `bd -C <store> list` | 不报错（没装 bd 可跳过） |
 | 地图 | `head -8 <kb>/facts/workspace-map.md` | 有生成时间和表格；顶层不足 3 项时没有这个文件 |
+| 档案索引 | `cat <kb>/facts/projects/INDEX.md` | 每个 git 仓一行；状态列是 `TODO` / `PARTIAL` / `READY` |
+| 档案齐否 | `grep -c '\| TODO \|' <kb>/facts/projects/INDEX.md` | `0` = 全部建完；大于 0 = 还有仓没建档 |
 
 再让 AI 说一句：「读一下 `AGENTS.local.md`，告诉我 store 和 kb 在哪。」说得对就通了。
 
@@ -106,6 +163,7 @@ done
 
 库的内容（分类、事实、决策、真实提交）归本技能继续管，脚本只建骨架：
 
+- **项目档案**：改过入口、命令或约束，用 `brief.md` 的刷新规则按需更新；`HEAD` 变了但引用文件没变，不用动
 - 新事实写 `facts/`，新决策写 `decisions/`，可复用步骤写 `runbooks/`
 - `INDEX.md` 超过 1000 tokens 就该整理，读 `references/curate.md`
 - 旧库搬进来读 `references/migration.md`
@@ -117,3 +175,5 @@ done
 - **让安装脚本顺手建库。** `install.sh` 只复制技能，建库只走这里
 - **两个同名工作区共用一个数据目录。** 比如 `D:/a/项目` 和 `E:/b/项目`；`.skein-scope` 会拦住，换 `--data` 即可，别手工删标记
 - **手工往地图里加备注。** 下次 `init.sh` 会把整张表覆盖掉；说明写到 `facts/workspace-notes.md`
+- **把档案写成第二份 README。** 超过 4 KB / 70 行就是写多了，细节留指针，不复制正文
+- **只跑脚本就以为建完了。** 档案索引还是 `TODO` 就说明没建完，新 agent 接手仍要现场摸

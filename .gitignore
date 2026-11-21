@@ -16,3 +16,6 @@ desktop.ini
 
 # 个人路由文件，永不提交（只忽略仓库根的这一份，模板要留）
 /AGENTS.local.md
+
+# 检查脚本临时文件
+_chk_tmp.sh

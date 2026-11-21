@@ -7,11 +7,11 @@ description: 需要按需检索项目知识库、回读某个结论的原文、�
 
 ## 只做这一件事
 
-在**不整份加载**的前提下，从知识库拿到需要的那一段；把新产生的事实与决策写回去。
+在**不整份加载**的前提下，从知识库拿到需要的那一段；把新产生的事实与决策写回去；给一个已有项目写一份能让陌生人接手的档案。
 
 **不做**：不碰任务状态（Beads）、不碰检查点（`task-checkpoint`）、不做语义自动合并。
 
-**建库和接入工作区都归这一个技能。** 别的技能只读库，不建库；`install.sh` 只复制技能，不碰项目目录。实际动作由技能目录里的 `scripts/init.sh` 完成——技能调用它，用户也可以直接跑它，同一份实现。
+**建库、接入工作区、项目建档都归这一个技能。** 别的技能只读库，不建库；`install.sh` 只复制技能，不碰项目目录。实际动作由技能目录里的 `scripts/init.sh` 完成——技能调用它，用户也可以直接跑它，但**只跑脚本得不到项目档案**（见 `references/init.md`）。
 
 ## 库在哪：向上找作用域
 
@@ -36,6 +36,7 @@ KB="$(kv kb)"
 
 | 级 | 动作 | 用在 |
 |---|---|---|
+| 0 | 读**当前仓那一份** `facts/projects/<仓名>.md` | 接手一个已有项目，先知道它是什么、从哪进、怎么跑 |
 | 1 | 读 `INDEX.md` + `current.md` | 定位到 1–2 个文件 |
 | 2 | `es -path "$KB" "<文件名片段>" -n 20 -export-json <tmp>` | 只记得文件名、不记得内容 |
 | 3 | `rg -n "<词>" INDEX.md current.md facts decisions runbooks` | 已知术语、函数名、错误码 |
@@ -43,7 +44,9 @@ KB="$(kv kb)"
 | 5 | `qmd get <file>:<from>:<count>` | 回读命中段 |
 | 6 | `qmd vsearch` | 概念模糊、前几级全漏 |
 
-**禁止**：开局 `cat` 整个文件、把 `archive/` 纳入常规检索、一次返回几十条。
+**禁止**：开局 `cat` 整个文件、把 `archive/` 纳入常规检索、一次返回几十条、**把 `projects/` 下所有档案一起读**。
+
+第 0 级只读**当前涉及的那一个仓**。跨仓任务才按实际涉及数量读，读之前先确认任务真的跨仓。档案本身也有上限（4 KB / 70 行），超了就是写多了。
 
 细节与坑（`es` 的 GBK 问题、`qmd` 的 mask 铁律、工具缺失时怎么降级）在 `references/search.md`。
 
@@ -69,7 +72,8 @@ proposals/<日期>-<子项目>-<主题>.md
 
 | 文件 | 什么时候读 |
 |---|---|
-| `references/init.md` | **接入一个新工作区、建库**（唯一入口，调 `scripts/init.sh`） |
+| `references/init.md` | **接入一个新工作区、建库**（唯一入口，调 `scripts/init.sh`，含逐仓建档流程） |
+| `references/brief.md` | **写或刷新项目档案**：模板、字段来源、4 KB 上限、黑名单、中断恢复 |
 | `references/search.md` | 要完整命令、`es` 乱码、`qmd` mask 报错、判断该不该开 QMD |
 | `references/migration.md` | 旧库迁进来 |
 | `references/curate.md` | `INDEX.md` 超 1000 tokens、`facts/` 出现矛盾、`journal/` 超 200 行 |
@@ -78,4 +82,5 @@ proposals/<日期>-<子项目>-<主题>.md
 
 - 检索：能贴出命中的原文片段与文件路径，不是「我记得有」
 - 写回：`git log` 里有一条对应提交，`INDEX.md` 能定位到新文件
-- 建库：按 `references/init.md` 的验收表逐项过一遍（含 `facts/workspace-map.md`），全绿才算完成
+- 建库：按 `references/init.md` 的验收表逐项过一遍（含 `facts/workspace-map.md` 与 `facts/projects/INDEX.md`），全绿才算完成
+- 建档：`INDEX.md` 里没有 `TODO`；每份档案都标了来源（源码 / 文档 / 推断），缺口写清而不是留空

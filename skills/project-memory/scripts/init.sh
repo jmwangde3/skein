@@ -190,6 +190,84 @@ if [ -f "$MAP_SH" ]; then
   bash "$MAP_SH" --workspace "$SCOPE" --kb "$KB" || say "地图没生成，可稍后单独跑：bash \"$(wp "$MAP_SH")\" --workspace \"$(wp "$SCOPE")\""
 fi
 
+# 项目档案索引：把每个 git 仓列进来，状态先标 TODO。
+# 语义建档由 agent 按 references/brief.md 完成，脚本不读源码。
+PROJ_DIR="$KB/facts/projects"
+IDX="$PROJ_DIR/INDEX.md"
+mkdir -p "$PROJ_DIR"
+
+hash8() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi | cut -c1-8
+}
+
+skip_dir() {
+  case "$1" in
+    node_modules|.venv|venv|dist|build|target|.git) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# 收集仓：顶层 + 第二层。判据是「有 .git（文件或目录）且 toplevel 就是自己」，
+# 这样 linked worktree（.git 是文件）能识别，父仓里的普通子目录不会被误判。
+REPO_LIST=""
+
+# 注意：脚本开头是 set -e，所有条件都得用 if，不能写 [ x ] && continue
+for d in "$SCOPE"/*/; do
+  [ -d "$d" ] || continue
+  if skip_dir "$(basename "${d%/}")"; then continue; fi
+  for cand in "$d" "$d"*/; do
+    [ -d "$cand" ] || continue
+    if skip_dir "$(basename "${cand%/}")"; then continue; fi
+    [ -e "$cand/.git" ] || continue
+    top="$(git -C "$cand" rev-parse --show-toplevel 2>/dev/null || true)"
+    [ -n "$top" ] || continue
+    if [ "$(cd "$top" && pwd -P)" != "$(cd "$cand" && pwd -P)" ]; then continue; fi
+    rel="${cand#"$SCOPE"/}"; rel="${rel%/}"
+    case " $REPO_LIST " in *" $rel "*) continue ;; esac
+    REPO_LIST="$REPO_LIST $rel"
+  done
+done
+REPO_LIST="${REPO_LIST# }"
+
+if [ -z "$REPO_LIST" ]; then
+  say "工作区里没有 git 仓，不建项目档案索引"
+else
+  tmp="$IDX.tmp.$$"
+  {
+    printf '# 项目档案索引\n\n'
+    printf '> 每个 git 仓一行。`TODO` = 还没建档；`PARTIAL` = 建了但关键字段没核实。\n'
+    printf '> 档案在同目录 `<仓名>.md`。接手时只读**当前涉及的仓**那一份，不要全读。\n'
+    printf '> 由 `scripts/init.sh` 生成；状态由建档 agent 更新。\n\n'
+    printf '| 仓 | 相对路径 | 档案 | 状态 | 基线 HEAD |\n'
+    printf '|---|---|---|---|---|\n'
+    n=0
+    for rel in $REPO_LIST; do
+      base="$(basename "$rel")"
+      file="$base.md"
+      # 同名仓加路径 hash，避免互相覆盖
+      dup=0
+      for other in $REPO_LIST; do
+        if [ "$other" = "$rel" ]; then continue; fi
+        if [ "$(basename "$other")" = "$base" ]; then dup=1; break; fi
+      done
+      if [ "$dup" -eq 1 ]; then file="$base-$(printf '%s' "$rel" | hash8).md"; fi
+
+      st="TODO"; sha="-"
+      if [ -f "$PROJ_DIR/$file" ]; then
+        st="$(sed -n 's/^- 状态：[[:space:]]*//p' "$PROJ_DIR/$file" | head -1 | tr -d '\r')"
+        [ -n "$st" ] || st="PARTIAL"
+        sha="$(sed -n 's/^- 基线：[[:space:]]*//p' "$PROJ_DIR/$file" | head -1 | tr -d '\r' | cut -d' ' -f1)"
+        [ -n "$sha" ] || sha="-"
+      fi
+      printf '| `%s` | `%s` | `%s` | %s | %s |\n' "$base" "$rel" "$file" "$st" "$sha"
+      n=$((n + 1))
+    done
+    printf '\n共 %d 个仓。未建档的项：`grep "| TODO |" INDEX.md`\n' "$n"
+  } > "$tmp"
+  mv -f "$tmp" "$IDX"
+  say "项目档案索引已写：$n 个仓（$(wp "$IDX")）"
+fi
+
 git -C "$KB" -c core.autocrlf=false add -A
 if ! git -C "$KB" diff --cached --quiet; then
   if [ "$NEW_KB" -eq 1 ]; then MSG="kb: 初始化"; else MSG="kb: 刷新地图与索引"; fi
