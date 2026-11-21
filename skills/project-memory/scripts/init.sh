@@ -139,6 +139,9 @@ if [ -n "$(git -C "$KB" remote 2>/dev/null || true)" ]; then
   gap "kb 已配置远程：私有库不该有远程。先人工核对 $(wp "$KB")"
 fi
 
+NEW_KB=0
+[ -f "$KB/INDEX.md" ] || NEW_KB=1
+
 if [ ! -f "$KB/INDEX.md" ]; then
   cat > "$KB/INDEX.md" <<EOF
 # $NAME · 知识库索引
@@ -181,11 +184,18 @@ if [ ! -f "$KB/current.md" ]; then
 EOF
 fi
 
+# 顺手生成工作区地图（机械快照，给新 agent 定位用）。失败不影响建库。
+MAP_SH="$(cd "$(dirname "$0")" && pwd)/map.sh"
+if [ -f "$MAP_SH" ]; then
+  bash "$MAP_SH" --workspace "$SCOPE" --kb "$KB" || say "地图没生成，可稍后单独跑：bash \"$(wp "$MAP_SH")\" --workspace \"$(wp "$SCOPE")\""
+fi
+
 git -C "$KB" -c core.autocrlf=false add -A
 if ! git -C "$KB" diff --cached --quiet; then
+  if [ "$NEW_KB" -eq 1 ]; then MSG="kb: 初始化"; else MSG="kb: 刷新地图与索引"; fi
   git -C "$KB" -c core.autocrlf=false -c user.name=skein -c user.email=skein@local \
-    commit -q -m "kb: 初始化"
-  say "知识库已提交"
+    commit -q -m "$MSG"
+  say "知识库已提交（$MSG）"
 fi
 
 ## 6. 任务库（可选）

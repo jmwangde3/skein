@@ -78,4 +78,4 @@ proposals/<日期>-<子项目>-<主题>.md
 
 - 检索：能贴出命中的原文片段与文件路径，不是「我记得有」
 - 写回：`git log` 里有一条对应提交，`INDEX.md` 能定位到新文件
-- 建库：按 `references/init.md` 的验收表逐项过一遍，全绿才算完成
+- 建库：按 `references/init.md` 的验收表逐项过一遍（含 `facts/workspace-map.md`），全绿才算完成

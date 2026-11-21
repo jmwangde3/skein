@@ -296,10 +296,20 @@ bash ~/.claude/skills/project-memory/scripts/init.sh \
 3. 写工作区根的 `AGENTS.local.md`（五个键，已有就沿用并只核对）
 4. 只在工作区根**本身是 git 仓**时，才把它加进 `info/exclude`
 5. 建 `kb` 独立仓 + 首版 `INDEX.md` / `current.md` + 一次提交
-6. 装了 `bd` 就顺手 `bd init`，没装就告诉你以后怎么补
-7. 打印验收用的四个路径
+6. 生成工作区地图 `kb/facts/workspace-map.md`（顶层不足 3 项就跳过）
+7. 装了 `bd` 就顺手 `bd init`，没装就告诉你以后怎么补
+8. 打印验收用的四个路径
 
 **不需要手工贴任何东西。** 脚本可重复执行，已存在的目录、路由、知识库都不会被覆盖。
+
+地图长这样，只写机械字段，不含评价：
+
+| 条目 | 类型 | 最后提交 | 顶层条目数 | 备注 |
+|---|---|---|---:|---|
+| `web-first-ask-browser-mode` | git 仓 | 2026-11-20 | 24 | package.json: web-first-ask@0.2.1 |
+| `token-bench-20261116` | 目录 | - | 12 | 无 |
+
+它不是当前事实，是某次扫描的快照；头部有生成时间，用前仍要核对目标目录和 Git HEAD。**不要手工改它**，重跑脚本会覆盖——要补说明写 `facts/workspace-notes.md`。
 
 ### 5.3 检查生成的路由
 
@@ -479,7 +489,7 @@ skein/
 ├── skills/                四个技能本体
 │   ├── task-checkpoint/   打结
 │   ├── agent-handoff/     接续
-│   ├── project-memory/    织存（含建库脚本 scripts/init.sh）
+│   ├── project-memory/    织存（含建库 scripts/init.sh 与地图 scripts/map.sh）
 │   └── agent-collab/      并线
 ├── templates/             全局规则片段（贴进客户端全局规则用）
 ├── docs/backlog.md        记下但暂不做的需求
