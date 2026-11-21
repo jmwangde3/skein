@@ -11,7 +11,7 @@ description: 需要按需检索项目知识库、回读某个结论的原文、�
 
 **不做**：不碰任务状态（Beads）、不碰检查点（`task-checkpoint`）、不做语义自动合并。
 
-**建库和接入工作区都归这一个技能。** 别的技能只读库，不建库；`install.sh` 只复制技能，不碰项目目录。
+**建库和接入工作区都归这一个技能。** 别的技能只读库，不建库；`install.sh` 只复制技能，不碰项目目录。实际动作由技能目录里的 `scripts/init.sh` 完成——技能调用它，用户也可以直接跑它，同一份实现。
 
 ## 库在哪：向上找作用域
 
@@ -69,7 +69,7 @@ proposals/<日期>-<子项目>-<主题>.md
 
 | 文件 | 什么时候读 |
 |---|---|
-| `references/init.md` | **接入一个新工作区、建库**（唯一入口） |
+| `references/init.md` | **接入一个新工作区、建库**（唯一入口，调 `scripts/init.sh`） |
 | `references/search.md` | 要完整命令、`es` 乱码、`qmd` mask 报错、判断该不该开 QMD |
 | `references/migration.md` | 旧库迁进来 |
 | `references/curate.md` | `INDEX.md` 超 1000 tokens、`facts/` 出现矛盾、`journal/` 超 200 行 |

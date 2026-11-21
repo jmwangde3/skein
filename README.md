@@ -271,23 +271,35 @@ H:/AI工作区/ChatGPT测试区/     ← 工作区根：放 AGENTS.local.md
 
 技能从当前目录**向上**找第一个 `AGENTS.local.md`，命中就停。所以子目录里不要再放第二份，会遮住工作区那份。
 
-### 5.2 建库：跟 AI 说一句话
+### 5.2 建库：两条路，同一份实现
 
-在工作区根目录打开你的 AI 客户端，说：
+**路一，跟 AI 说一句话**（在工作区根目录打开客户端）：
 
 > **用 project-memory 给这个工作区建库，数据放 `D:/skein-data`**
 
-它会读 `project-memory/references/init.md`，按顺序做：
+它会读 `project-memory/references/init.md`，找到技能里的 `scripts/init.sh` 并执行。
 
-1. 确认工作区根，扫一遍子目录有没有第二份 `AGENTS.local.md`（有就停下来问你）
-2. 建 `<数据家>/<工作区名>/{store,checkpoints,kb,backups,worktrees}`，并写一个归属标记 `.skein-scope`（防止两个同名工作区共用一份库）
-3. 写工作区根的 `AGENTS.local.md`（五个键）
+**路二，自己敲命令**（不想让 AI 动手，或者没有能跑 shell 的客户端）：
+
+```bash
+bash ~/.claude/skills/project-memory/scripts/init.sh \
+  --workspace "D:/work/我的工作区" \
+  --data "D:/skein-data"
+```
+
+技能目录按你的客户端换（`~/.codex/skills`、`~/.workbuddy/skills` 等）。两条路跑的是**同一个脚本**，结果完全一样——不存在「AI 建的和手动建的规则不一样」这种事。
+
+脚本做的事：
+
+1. 扫一遍子目录有没有第二份 `AGENTS.local.md`（有就停下列清单，不删别人的）
+2. 建 `<数据家>/<工作区名>/{store,checkpoints,kb,backups,worktrees}`，写归属标记 `.skein-scope`（防止两个同名工作区共用一份库）
+3. 写工作区根的 `AGENTS.local.md`（五个键，已有就沿用并只核对）
 4. 只在工作区根**本身是 git 仓**时，才把它加进 `info/exclude`
 5. 建 `kb` 独立仓 + 首版 `INDEX.md` / `current.md` + 一次提交
-6. 装了 `bd` 就顺手 `bd init`
-7. 按验收表逐项核对
+6. 装了 `bd` 就顺手 `bd init`，没装就告诉你以后怎么补
+7. 打印验收用的四个路径
 
-**不需要手工贴任何东西**，也没有第二个脚本要跑。
+**不需要手工贴任何东西。** 脚本可重复执行，已存在的目录、路由、知识库都不会被覆盖。
 
 ### 5.3 检查生成的路由
 
@@ -467,9 +479,10 @@ skein/
 ├── skills/                四个技能本体
 │   ├── task-checkpoint/   打结
 │   ├── agent-handoff/     接续
-│   ├── project-memory/    织存
+│   ├── project-memory/    织存（含建库脚本 scripts/init.sh）
 │   └── agent-collab/      并线
-├── templates/             模板：本机路由文件、全局规则
+├── templates/             全局规则片段（贴进客户端全局规则用）
+├── docs/backlog.md        记下但暂不做的需求
 ├── install/               技能安装脚本（两个平台各一版，只复制技能）
 └── LICENSE
 ```
