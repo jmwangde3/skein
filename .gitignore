@@ -1,0 +1,18 @@
+# 系统垃圾
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 编辑器临时文件
+*.swp
+*~
+.idea/
+.vscode/
+
+# 备份文件（技能目录里留 .bak 会被一起部署到每个客户端）
+*.bak
+*.bak-*
+*.legacy
+
+# 个人路由文件，永不提交
+AGENTS.local.md
