@@ -6,7 +6,7 @@
 ## 1. 取得合法租约
 
 ```bash
-bd -C "$B" show <id>
+bd -C "$B" show "<id>"
 ```
 
 | 看到什么 | 动作 |
@@ -20,7 +20,16 @@ bd -C "$B" show <id>
 
 ## 2. 三方交叉核对
 
-读检查点 `<checkpoints>/<task_id>.md`（`<checkpoints>` 取自项目根 `AGENTS.local.md` 的 `checkpoints` 键，缺键即报 `[HANDOFF_GAP]`），然后在 `worktree` 路径下核对：
+读检查点 `<checkpoints>/<task_id>.md`（`<checkpoints>` 取自项目根 `AGENTS.local.md` 的 `checkpoints` 键，缺键即报 `[HANDOFF_GAP]`），然后在 `worktree` 路径下核对。命令里的 `<worktree>` 是占位符，换成真实路径；检查点里 `worktree` 为空时用项目根 `$PROJ`。
+
+**文件头核对**
+
+| 字段 | 合格标准 | 不合格怎么办 |
+|---|---|---|
+| `schema_version` | 等于 1 | 版本不认识 → 停手报 `[HANDOFF_GAP]`，不要按自己的理解硬读 |
+| `task_id` | 与手上的 `<id>` 完全一致 | 停手 |
+| `checkpoint_rev` | 是正整数 | 缺失或不是数字 → 文件被截断过，停手 |
+| `mode` | 交出方应为 `HANDOFF_READY` | 是 `ACTIVE` 说明对方没写完就交棒 → 停手问 |
 
 **ID 核对**
 检查点 YAML 里的 `task_id` 必须与手上的 `<id>` 完全一致。
@@ -39,7 +48,7 @@ git -C "<worktree>" rev-parse HEAD
 git -C "<worktree>" status --short
 ```
 
-逐项对检查点的 `dirty_files` 与 `untracked_files`。
+逐项对检查点的 `dirty_files` 与 `untracked_files`。`git status --short` 里前两列是 `??` 的算未跟踪，其余算已修改。
 
 - 共用工作树接力时，**保留前任留下的合法脏文件**
 - 即使检查点写「干净」，只要 `git status --short` 有输出就**绝不直接清理**，先查来源

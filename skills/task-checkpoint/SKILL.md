@@ -27,26 +27,50 @@ description: 单 Agent 长任务做到一半、上下文到 60%–75%、即将�
 
 `<checkpoints>/<task_id>.md`，一任务一文件，每次覆盖为最新快照。
 
-`<checkpoints>` 与 store 都从项目根的 `AGENTS.local.md` 读（键 `checkpoints` / `store`）。读不到就报 `[HANDOFF_GAP]`，不要猜路径。
+两个键都从项目根的 `AGENTS.local.md` 读：
+
+- **`checkpoints`** —— 必需。缺了就报 `[HANDOFF_GAP]`，不要猜路径
+- **`store`** —— 可选。有它且装了 `bd`，才做归属栅栏和续租；没有就只写文件。一个 agent 长期自己跑，不需要 Beads
+
+任务 ID 用 `bd` 的 ID；没装 Beads 时自己起一个 `local-<日期>-<短名>`，同一任务始终用同一个。
 
 ## 三层写入协议，顺序不许换
+
+下面命令里的 `<task_id>` 是占位符，执行前换成真实值。**直接复制会报 `No such file or directory`**——bash 会把 `<xx>` 当成"从这个文件读输入"。
 
 ```bash
 PROJ="${PROJ:-$(git rev-parse --show-toplevel 2>/dev/null)}"
 LOCAL="$PROJ/AGENTS.local.md"
 [ -f "$LOCAL" ] || { echo "[HANDOFF_GAP] 缺 $LOCAL"; exit 1; }
-kv() { sed -n "s/^$1:[[:space:]]*//p" "$LOCAL" | head -1 | tr -d '\r'; }
+kv() { sed -n "s/^$1:[[:space:]]*//p" "$LOCAL" | head -n 1 | tr -d '\r'; }
 B="$(kv store)"; CKPT="$(kv checkpoints)"
-[ -n "$B" ] && [ -n "$CKPT" ] || { echo "[HANDOFF_GAP] 缺 store / checkpoints 键"; exit 1; }
+[ -n "$CKPT" ] || { echo "[HANDOFF_GAP] 缺 checkpoints 键"; exit 1; }
 
-# 1. 读 rev（没文件就是 0）
-grep '^checkpoint_rev:' "$CKPT/<task_id>.md"
+TASK_ID="<task_id>"                 # 换成真实 ID
+TARGET="$CKPT/$TASK_ID.md"
+mkdir -p "$CKPT"
 
-# 2. 栅栏：不是我的任务就停
-bd -C "$B" update <id> --if-assignee "$BEADS_ACTOR" --append-notes "checkpoint $(date +%H:%M)"
+# 1. 读 rev（没有文件就是 0）
+if [ -f "$TARGET" ]; then
+  REV="$(sed -n 's/^checkpoint_rev:[[:space:]]*//p' "$TARGET" | head -n 1 | tr -d '\r ')"
+else
+  REV=0
+fi
+REV="${REV:-0}"; NEXT=$((REV + 1))
 
-# 3. 整份重写，rev = 读到的值 + 1
-# 4. 回读确认 rev 已是新值
+# 2. 栅栏：有 store 且装了 bd 才做；exit 13 = 任务已被别人接走
+if [ -n "$B" ] && command -v bd >/dev/null 2>&1; then
+  bd -C "$B" update "$TASK_ID" --if-assignee "$BEADS_ACTOR" \
+     --append-notes "checkpoint $(date +%H:%M)" || {
+    rc=$?; [ "$rc" -eq 13 ] && { echo "任务已被别人接走，停手重读"; exit 13; }; exit "$rc"; }
+fi
+
+# 3. 整份重写：先写 "$TARGET.tmp"，YAML 里 checkpoint_rev 填 $NEXT
+mv -f "$TARGET.tmp" "$TARGET"
+
+# 4. 回读断言
+GOT="$(sed -n 's/^checkpoint_rev:[[:space:]]*//p' "$TARGET" | head -n 1 | tr -d '\r ')"
+[ "$GOT" = "$NEXT" ] || { echo "[HANDOFF_GAP] rev 回读 $GOT，期望 $NEXT"; exit 1; }
 ```
 
 - 第 2 步 **exit 13** = 任务已被别人接走，立即停手重读
@@ -105,11 +129,13 @@ untracked_files: []
 
 `mode`：`ACTIVE` / `HANDOFF_READY` / `RECEIVED` / `CLOSED`。
 
+流转只有一条线：开工或续写 `ACTIVE` → 交出前 `HANDOFF_READY` → 接手核对后先 `RECEIVED`，开始执行「下一步」第 1 条时改回 `ACTIVE` → 验收通过、任务关闭后 `CLOSED`。别停在中间态。
+
 **任务状态（owner / status / 依赖）不写进检查点**，实时读 `bd -C "$B" show <id>`。复制就是制造第二份真相。
 
 ## 长任务续租
 
-租约 300 秒。任务超过 4 分钟就 `bd -C "$B" heartbeat <id>`。过期会被别人 `reclaim` 收走。
+租约 300 秒。有 `store` 且装了 `bd` 时，任务超过 4 分钟就 `bd -C "$B" heartbeat <id>`，过期会被别人 `reclaim` 收走；没有 `store` 或没有 `bd` 时跳过这一步，只更新检查点的时间戳。
 
 ## 完成标志
 

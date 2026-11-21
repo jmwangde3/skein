@@ -155,22 +155,39 @@ powershell -ExecutionPolicy Bypass -File install\install.ps1
 
 `-ExecutionPolicy Bypass` 只是让这一次运行放行，不改系统设置。
 
-脚本只做一件事：把 `skills/` 下四个文件夹复制到上面那些目录。**已存在的不会覆盖**，想覆盖加 `--force`（PowerShell 用 `-Force`）。
+脚本做两件事：把**全局技能**（只有 `task-checkpoint`）复制到上面那些目录；如果你同时给了 `--project`，再把另外三个**项目级技能**复制到那个项目里的 `.claude/skills` 之类目录。**已存在的不会覆盖**，想覆盖加 `--force`（PowerShell 用 `-Force`）。
+
+> 为什么分开：`task-checkpoint` 每个项目都要用，装全局；另外三个只在特定项目里才有意义，装全局会让不相干的项目也被它们触发，白占上下文。
 
 **做法 B：手动复制（不想跑脚本就这样）**
 
-把仓库里 `skills/` 下的四个文件夹整体复制过去：
+全局只放一个：
 
 ```
 skills/task-checkpoint   →  ~/.claude/skills/task-checkpoint
-skills/agent-handoff     →  ~/.claude/skills/agent-handoff
-skills/project-memory    →  ~/.claude/skills/project-memory
-skills/agent-collab      →  ~/.claude/skills/agent-collab
+```
+
+另外三个放到**项目里**（把 `<项目>` 换成你的项目根目录，客户端换前缀）：
+
+```
+skills/agent-handoff     →  <项目>/.claude/skills/agent-handoff
+skills/project-memory    →  <项目>/.claude/skills/project-memory
+skills/agent-collab      →  <项目>/.claude/skills/agent-collab
+```
+
+放完把这三行写进 `<项目>/.git/info/exclude`，免得被提交进你自己的仓库：
+
+```
+/.claude/skills/agent-handoff/
+/.claude/skills/project-memory/
+/.claude/skills/agent-collab/
 ```
 
 **层级别搞错：** `SKILL.md` 必须**直接**在技能文件夹里。变成 `skills/task-checkpoint/task-checkpoint/SKILL.md` 就读不到。
 
 装完重启客户端。多数客户端只在启动时扫描一次技能目录。
+
+**复制 vs 链接：** 脚本是复制，改本仓库的 `skills/` 不会自动同步。如果你想"改一处、各端立刻生效"，用 [skills-manager](https://github.com/xingkongliang/skills-manager) 部署——它建的是符号链接，`skills-manager projects deploy --agent codex <项目> agent-handoff` 这样按项目挂载。
 
 ### 4.2 档二：装任务库 Beads（强烈建议）
 
@@ -209,9 +226,11 @@ export QMD_CONFIG_DIR="$HOME/.config/qmd"
 2. **建集合时必须写白名单**，只列要索引的目录：
 
 ```bash
-qmd collection add <你的知识库路径> --name skein-kb \
+qmd collection add "<你的知识库路径>" --name skein-kb \
   --mask "INDEX.md,current.md,facts/*.md,decisions/*.md,runbooks/*.md"
 ```
+
+这里故意只列五类：`journal/` 是流水账、`proposals/` 是没定稿的提案、`archive/` 是旧版本，索引进来只会让检索结果变脏。集合名 `skein-kb` 要和技能里的一致，改了名技能就找不到集合（那时会退回前三级检索，不会报错停住）。
 
 三条铁律（都是踩过的）：
 
@@ -275,11 +294,13 @@ powershell -ExecutionPolicy Bypass -File install\install.ps1 -Client all `
 
 它会做五件事，**已经存在的文件一律不覆盖**：
 
-1. 把四个技能装到各客户端
+1. 把全局技能（只有 `task-checkpoint`）装到各客户端
 2. 建好上面那套目录
 3. 生成项目里的 `AGENTS.local.md`（把路径填好）
 4. 把 `AGENTS.local.md` 加进 `.git/info/exclude`（永不提交）
-5. 给知识库 `git init` 并写第一版 `INDEX.md`、`current.md`
+5. 给知识库 `git init`、写一版空的 `INDEX.md` / `current.md` 并提交
+
+**它会替你挡两种错**：数据家目录选在代码仓里（会被提交、可能被推送）会直接拒绝；两个同名项目指向不同数据家时会拒绝，避免共用一个库。
 
 ### 第 2 步：检查 `AGENTS.local.md`
 
@@ -313,22 +334,30 @@ powershell -ExecutionPolicy Bypass -File install\install.ps1 -Client all `
 - 知识库同一时刻只有一个写者，其他人写 `proposals/`。
 ```
 
-### 第 4 步：建任务库和知识库
+### 第 4 步：验收（不是重做一遍）
+
+上面那条命令已经建好了任务库和知识库。这一步只确认，不要重复初始化：
 
 ```bash
-# 换成你 AGENTS.local.md 里 store 的路径，先进入目录再 init
+# 知识库必须没有任何远程
+git -C "D:/skein-data/我的项目/kb" remote -v
+
+# 任务库能读就算成功；报错才需要手动 init
+bd -C "D:/skein-data/我的项目/store" list
+```
+
+只有一种情况需要你补做——**当时机器上还没装 `bd`**。装好 Beads 后补一次：
+
+```bash
 cd "D:/skein-data/我的项目/store"
 bd init --prefix ag --non-interactive --stealth --skip-agents
-
-# 知识库：必须确认没有任何远程
-git -C "D:/skein-data/我的项目/kb" remote -v      # 应该没有任何输出
-git -C "D:/skein-data/我的项目/kb" add -A
-git -C "D:/skein-data/我的项目/kb" commit -m "kb: 初始化"
 ```
 
 `bd init` 必须在目标目录里跑，不能用 `bd -C` 指过去——`-C` 只对已经存在的任务库有效。
 
 `--stealth` 让任务库不干扰你自己的 git 配置；`--skip-agents` 不往项目里塞它自己的说明文件。初始化时可能看到一条 `failed to update git exclude: not a git repository`，无害，可以忽略。
+
+知识库的**内容**（分类、事实、决策）不在这里做，让 AI 用 `project-memory` 整理——那是它的活。
 
 ### 第 5 步：自检
 
@@ -336,7 +365,8 @@ git -C "D:/skein-data/我的项目/kb" commit -m "kb: 初始化"
 
 | 检查 | 命令 | 期望结果 |
 |---|---|---|
-| 技能到位 | `ls ~/.claude/skills` | 看到四个名字 |
+| 全局技能 | `ls ~/.claude/skills` | 看到 `task-checkpoint`（另外三个**不该**在这里） |
+| 项目技能 | `ls <项目>/.claude/skills` | 看到 `agent-handoff`、`project-memory`、`agent-collab` |
 | 路由文件 | `cat <项目>/AGENTS.local.md` | 五个键都有值 |
 | 忽略生效 | `git -C <项目> check-ignore -v AGENTS.local.md` | 有一行输出（说明被忽略） |
 | 任务库能读 | `bd -C <store> list` | 不报错，可能为空 |
@@ -405,7 +435,7 @@ git -C "D:/skein-data/我的项目/kb" commit -m "kb: 初始化"
 任务有 300 秒租约。查归属：
 
 ```bash
-bd -C <store> show <任务号>
+bd -C "<store>" show "<任务号>"
 ```
 
 - `assignee` 为空 → 直接认领

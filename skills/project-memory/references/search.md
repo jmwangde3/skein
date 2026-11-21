@@ -6,12 +6,17 @@
 PROJ="${PROJ:-$(git rev-parse --show-toplevel 2>/dev/null)}"
 LOCAL="$PROJ/AGENTS.local.md"
 [ -f "$LOCAL" ] || { echo "[HANDOFF_GAP] 缺 $LOCAL"; exit 1; }
-kv() { sed -n "s/^$1:[[:space:]]*//p" "$LOCAL" | head -1 | tr -d '\r'; }
+kv() { sed -n "s/^$1:[[:space:]]*//p" "$LOCAL" | head -n 1 | tr -d '\r'; }
 KB="$(kv kb)"
 [ -n "$KB" ] || { echo "[HANDOFF_GAP] 缺 kb 键"; exit 1; }
-QMD_CACHE="$HOME/.cache/qmd"      # 本机上是指向 H 盘的 junction
-QMD_CONF="$HOME/.config/qmd"
+
+# QMD 的两个目录：缓存家目录（qmd 自己会在下面建 qmd/）+ 配置目录本身
+XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
+QMD_CONFIG_DIR="${QMD_CONFIG_DIR:-$HOME/.config/qmd}"
+QMD() { XDG_CACHE_HOME="$XDG_CACHE_HOME" QMD_CONFIG_DIR="$QMD_CONFIG_DIR" qmd "$@"; }
+
 ESOUT="${TEMP:-/tmp}/es-out.json"
+COLL="${COLL:-skein-kb}"     # 与 README 里 qmd collection add --name 保持一致
 ```
 
 ## 六级的完整命令
@@ -24,38 +29,57 @@ cat "$KB/INDEX.md" "$KB/current.md"
 
 **2. 文件名（只记得叫什么）**
 
+需要 Everything（`es`）。没有就跳到第 3 级，别卡在这。
+
 ```bash
-es -path "$KB" "<片段>" -n 20 -export-json "$ESOUT"
-python -c "import json,sys;[print(x['filename']) for x in json.load(open(sys.argv[1],encoding='utf-8'))]" "$ESOUT"
+Q="<片段>"          # 占位符，换成真实关键词
+if command -v es >/dev/null 2>&1 && [ -d "$KB" ]; then
+  rm -f "$ESOUT"
+  es -path "$KB" "$Q" -n 20 -export-json "$ESOUT" || true
+  [ -f "$ESOUT" ] && python -c "import json,sys;[print(x['filename']) for x in json.load(open(sys.argv[1],encoding='utf-8'))]" "$ESOUT"
+else
+  echo "es 不可用，跳过文件名检索" >&2
+fi
 ```
 
 **3. 内容精确词**
 
 ```bash
-rg -n "<词>" "$KB/INDEX.md" "$KB/current.md" "$KB/facts" "$KB/decisions" "$KB/runbooks"
+Q="<词>"            # 占位符
+if command -v rg >/dev/null 2>&1; then
+  rg -n -F "$Q" "$KB/INDEX.md" "$KB/current.md" "$KB/facts" "$KB/decisions" "$KB/runbooks"
+else
+  grep -rn -F "$Q" "$KB/INDEX.md" "$KB/current.md" "$KB/facts" "$KB/decisions" "$KB/runbooks"
+fi
 ```
 
 **4. 换词 / 跨文件（50 篇以上才开）**
 
+需要 QMD。没装就退回第 3 级换词再搜，别报错停住。
+
 ```bash
-XDG_CACHE_HOME="$QMD_CACHE" QMD_CONFIG_DIR="$QMD_CONF" qmd search "<词>" -c agents-kb -n 5
+Q="<词>"
+command -v qmd >/dev/null 2>&1 && QMD search "$Q" -c "$COLL" -n 5
 ```
 
 **5. 回读命中段**
 
 ```bash
-XDG_CACHE_HOME="$QMD_CACHE" QMD_CONFIG_DIR="$QMD_CONF" qmd get facts/agent-env.md:1:60
+QMD get facts/agent-env.md:1:60
 ```
 
 **6. 语义兜底**
 
 ```bash
-XDG_CACHE_HOME="$QMD_CACHE" QMD_CONFIG_DIR="$QMD_CONF" qmd vsearch "<描述>" -c agents-kb -n 5
+D="<描述>"
+command -v qmd >/dev/null 2>&1 && QMD vsearch "$D" -c "$COLL" -n 5
 ```
+
+第 4–6 级返回「找不到集合」时，说明这个项目还没建集合，或集合名不是 `skein-kb`——退回前三级，不要现场重建索引。
 
 ## `es` 的三个坑
 
-1. **stdout 是 GBK。** UTF-8 终端里看到 `H:\AI������\` 这种乱码，内容其实是对的。要读内容必须 `-export-json` 再按 UTF-8 解析。
+1. **stdout 是 GBK。** UTF-8 终端里，中文路径会显示成一串问号或方块，内容其实是对的。要读内容必须 `-export-json` 再按 UTF-8 解析。
 2. **不带 `-path` 就是全盘搜。** 会捞出一堆 `workspace\sessions\*.modify_backup_meta` 之类的备份噪音。
 3. **路径不存在时返回 rc=0 且不生成文件。** 不能靠退出码判断成功，要先确认路径存在，或把「文件不存在」当成 0 条结果。
 

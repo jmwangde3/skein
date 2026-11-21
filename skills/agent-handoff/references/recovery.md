@@ -4,7 +4,7 @@
 
 | # | 异常 | 现场特征 | 强制动作 |
 |---|---|---|---|
-| 1 | 检查点已写，任务释放失败 | `unclaim` 报错，`show` 仍显示 A 是 assignee | A 活着：重试释放（最多 3 次），**成功前严禁通知 B**，三次失败报 `[HANDOFF_GAP]`。A 已崩：B 等 `lease_expires_at` 过期后 `bd -C "$B" reclaim` 接管 |
+| 1 | 检查点已写，任务释放失败 | `unclaim` 报错，`show` 仍显示 A 是 assignee | A 活着：先原样重试一次，仍失败就 `show` 核状态，**成功前严禁通知 B**；状态解释不了报 `[HANDOFF_GAP]`。A 已崩：B 等 `lease_expires_at` 过期后 `bd -C "$B" reclaim` 接管 |
 | 2 | 任务已释放，接手方领取失败 | `unclaim` 成功（assignee 为空），B 的 `--claim` 报错 | 不需要召回 A。任意合法接手方重查 `show` 确认 assignee 为空，重读最新检查点后重新 `--claim`；若已被第三方抢走，按正常占用处理 |
 | 3 | 任务 ID 与检查点对不上 | 检查点 YAML 的 `task_id` 与手上的 `<id>` 不同 | **立即停手**。严禁静默把 `task_id` 改成一致。贴出检查点头部与 `show` 输出，报 `[HANDOFF_GAP]` 交人工裁决 |
 | 4 | `checkpoint_rev` 比预期旧 | 读到的 rev 小于本 agent 上次写入的值 | **拒绝写入**。重读检查点全文 + `git status --short` + `git log -n 5`，判断是工作树被回滚还是检查点被覆盖。确认真实进度、合并内容后，用「当前读到的 rev + 1」重走三层协议 |

@@ -17,7 +17,7 @@ description: 要把任务交给另一个 Agent（handoff）、作为陌生或返
 
 1. 写最终检查点，`mode: HANDOFF_READY`，记全 `head` / `dirty_files` / `untracked_files`
 2. `bd -C "$B" unclaim <id>`
-3. **`unclaim` 成功后才通知 B。** 报错就重试，三次仍失败报 `[HANDOFF_GAP]`
+3. **`unclaim` 成功后才通知 B。** 报错先原样重试一次；第二次仍失败就先 `bd -C "$B" show <id>` 核状态，不要第三次照原样敲，状态解释不了就报 `[HANDOFF_GAP]`
 
 **路径 2：A 已崩或失联**
 

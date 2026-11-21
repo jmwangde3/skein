@@ -21,10 +21,14 @@
 ## 搬完之后必做
 
 ```bash
-cd "$S/kb"
-git add -A && git commit -m "kb: 从旧库迁移"
-rg -n "旧文件名" INDEX.md current.md facts decisions   # 确认没有断链
+# K 是 AGENTS.local.md 里 kb 指向的路径，见 setup.md 第 0 步
+git -C "$K" -c core.autocrlf=false add -A
+git -C "$K" -c core.autocrlf=false commit -m "kb: 从旧库迁移"
+OLD="旧文件名"     # 占位符，换成真实的旧文件名
+rg -n -F "$OLD" "$K/INDEX.md" "$K/current.md" "$K/facts" "$K/decisions" "$K/runbooks"   # 确认没有断链
 ```
+
+`archive/` 里的旧文件名引用不用改，那是历史原文；但要确认 `archive/README.md` 说清了「按文件名找，别信链接」。
 
 **相对链接会断。** 旧文档里的 `[入口](AGENTS.md)` 这类链接在搬家后全部失效。在 `archive/README.md` 里写明「按文件名找，别信链接」。
 

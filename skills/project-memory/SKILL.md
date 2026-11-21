@@ -13,6 +13,8 @@ description: 需要按需检索项目知识库、回读某个结论的原文、�
 
 知识库位置从项目根 `AGENTS.local.md` 的 `kb:` 读，读不到报 `[HANDOFF_GAP]`。
 
+**建库归这一个技能。** 安装脚本只准备空骨架（目录、路由、空的 INDEX/current），库的内容——分类、事实、决策、首次真实提交——只由 `project-memory` 做，别的技能不写库。
+
 ## 检索阶梯：从便宜到贵，命中就停
 
 | 级 | 动作 | 用在 |
@@ -20,7 +22,7 @@ description: 需要按需检索项目知识库、回读某个结论的原文、�
 | 1 | 读 `INDEX.md` + `current.md` | 定位到 1–2 个文件 |
 | 2 | `es -path <kb> "<文件名片段>" -n 20 -export-json <tmp>` | 只记得文件名、不记得内容 |
 | 3 | `rg -n "<词>" INDEX.md current.md facts decisions runbooks` | 已知术语、函数名、错误码 |
-| 4 | `qmd search "<词>" -c agents-kb -n 5` | 换词、跨文件（**50 篇以上才开**） |
+| 4 | `qmd search "<词>" -c skein-kb -n 5` | 换词、跨文件（**50 篇以上才开**） |
 | 5 | `qmd get <file>:<from>:<count>` | 回读命中段 |
 | 6 | `qmd vsearch` | 概念模糊、前几级全漏 |
 
@@ -30,7 +32,9 @@ description: 需要按需检索项目知识库、回读某个结论的原文、�
 
 ## 写入：全库单写者
 
-同一时刻只有一个 agent 直接写 `kb/`。其他人写 `proposals/`：
+同一时刻只有一个 agent 直接写 `kb/`。**并行开工前由发起方点名指定写者**，写者写满整个并行期；交接时写者身份随检查点一起交给下一个人。没点名就等于没写者，此时谁也不许直接改库。
+
+其他人写 `proposals/`：
 
 ```
 proposals/<日期>-<主题>.md
