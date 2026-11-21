@@ -11,27 +11,29 @@ description: 要把任务交给另一个 Agent（handoff）、作为陌生或返
 
 **不做**：日常进度落盘（`task-checkpoint`）、并行分支合并（`agent-collab`）、建库（`project-memory`）。
 
-## 交接只有两条合法路径
+## 接手由 B 发起，A 不必交棒
 
-**路径 1：A 还活着**
+用户说「让 B 接手」时，**A 不需要先写检查点、不需要 `unclaim`、不需要通知任何人**。B 自己看现场决定动作：
 
-1. 写最终检查点，`mode: HANDOFF_READY`，记全 `head` / `dirty_files` / `untracked_files`
-2. `bd -C "$B" unclaim <id>`
-3. **`unclaim` 成功后才通知 B。** 报错先原样重试一次；第二次仍失败就先 `bd -C "$B" show <id>` 核状态，不要第三次照原样敲，状态解释不了就报 `[HANDOFF_GAP]`
+| 现场（`bd -C "$B" show "$TASK_ID"`） | B 的动作 |
+|---|---|
+| 没人认领 | `bd -C "$B" update "$TASK_ID" --claim` |
+| 租约已过期 | `bd -C "$B" reclaim`，再 `--claim` |
+| 租约有效，用户已让 A 停下 | `bd -C "$B" update "$TASK_ID" --force -a "$BEADS_ACTOR"` 转派，再 `--claim`、`heartbeat` |
+| 租约有效，A 可能还在写 | **只读**。请用户先停 A；或两人都要继续 → 走 `agent-collab` 开独立 worktree |
 
-**路径 2：A 已崩或失联**
+**授权不等于确认 A 已停。** `--force` 只改任务归属，**不会终止 A 已经发出的命令**，也不保护工作树、检查点和知识库。所以「用户让我接」+「A 还在跑」两件事同时成立时，B 不许在同一棵树里落笔。
 
-等租约过期（300 秒），B 跑 `bd -C "$B" reclaim` 回收，再 `--claim` 接手。
-这条路**不需要 A 做任何事，也不要求 A 的 `unclaim` 成功**——死掉的进程永远等不到回执。
+A 自愿交棒（写 `HANDOFF_READY` 再 `unclaim`）仍然更完整、更省事，但那是**快捷路径，不是 B 接手的前置条件**。
 
-**没有第三条。** A 没释放、租约也没过期，B 就 `--claim` 或直接改文件 = 抢占。判据是 `bd show <id>` 里的 `lease_expires_at`，不是「我觉得 A 应该停了」。
+**没有 `bd` 时**：只有文件快照，没有归属栅栏。确认 A 不再写才能顺序接手；确认不了就停在只读并报 `[HANDOFF_GAP]`——纯文件模式没有自动互斥。
 
 ## 四条禁忌
 
-- **不许抢占未过期任务**：看时间戳，不靠猜
+- **没有用户的接管指令，不许动别人的有效租约**：`--force` 只在「用户要求 B 接手」时用，其余情况看时间戳
 - **A 复活后 `--if-assignee` 返回 exit 13 就停手**，不许抢回来
 - **检查点说「干净」也不许 `git clean`**：先查来源
-- **不许等人工点头**：检查点 / Beads / 代码现场三者能互相印证就开工；三者冲突且证据无法解释，才报 `[HANDOFF_GAP]`
+- **不许无故等人工点头**：三方印证一致就开工；冲突且证据解释不了，才报 `[HANDOFF_GAP]`
 
 ## 接手方必须重跑核对
 
@@ -39,11 +41,13 @@ description: 要把任务交给另一个 Agent（handoff）、作为陌生或返
 
 `bd show <id>` 核归属 → 读检查点 → 核 `git status --short` + `git rev-parse HEAD` → 只按「下一步」第 1 条开工
 
+主动接管拿到的可能是 `mode: ACTIVE` 的半截快照，**「下一步」可能已经过时**，先对着 Git 现场核实再执行。
+
 ## 出错时
 
 领取失败、rev 倒退、ID 对不上、现场文件消失 → 读 `references/recovery.md`，按现场特征查表，不要凭感觉处理。
 
 ## 完成标志
 
-- 交出方：检查点落盘 + `unclaim` 成功（或已报 GAP）
-- 接手方：`--claim` 成功 + 三方核对一致 + 检查点 `mode: RECEIVED`
+- B 主动接手：领取或转派后 `show` 确认归属是 B + 已确认 A 停止 + 三方核对一致 + 检查点 `mode: RECEIVED`
+- A 自愿交出：检查点落盘 + `unclaim` 成功（或已报 `[HANDOFF_GAP]`）

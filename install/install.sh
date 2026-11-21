@@ -65,6 +65,17 @@ realpath_dir() { ( cd "$1" && pwd -P ); }
 # 先复制到同级临时目录再整体替换，避免复制中断留下半个技能
 install_one() {
   local src="$1" dest="$2" s="$3" tmp
+  # 别把安装目标指回源目录，否则 --force 会删掉仓库里的技能本体
+  if [ "$(cd "$dest" 2>/dev/null && pwd -P)" = "$src" ]; then
+    echo "拒绝：安装目标就是技能源目录 $dest/$s" >&2; exit 2
+  fi
+  if [ -L "$dest/$s" ]; then
+    if [ "$FORCE" -eq 1 ]; then
+      echo "拒绝用 --force 拆除符号链接：$dest/$s（由 skills-manager 管理，请在那边卸载）" >&2; exit 2
+    fi
+    echo "  跳过（符号链接）：$dest/$s"
+    return 0
+  fi
   if [ -e "$dest/$s" ] && [ "$FORCE" -ne 1 ]; then
     echo "  跳过（已存在）：$dest/$s"
     return 0
@@ -72,7 +83,7 @@ install_one() {
   mkdir -p "$dest"
   tmp="$dest/.$s.new.$$"
   rm -rf "$tmp"
-  cp -R "$src/$s" "$tmp"
+  if ! cp -R "$src/$s" "$tmp"; then rm -rf "$tmp"; return 1; fi
   rm -rf "$dest/$s"
   mv "$tmp" "$dest/$s"
   echo "  已装：$dest/$s"
@@ -156,8 +167,27 @@ if [ -f "$LOCAL" ]; then
   fi
 fi
 
-mkdir -p "$D/store" "$D/checkpoints" "$D/backups"
-mkdir -p "$D/kb/facts" "$D/kb/decisions" "$D/kb/runbooks" \
+# 数据目录已经装着别的项目，而当前项目没有路由 —— 两个同名项目会共用一份私有数据
+if [ -f "$D/kb/INDEX.md" ] && [ ! -f "$LOCAL" ]; then
+  echo "拒绝：$D 已经有知识库，但 $PROJ 没有 AGENTS.local.md。" >&2
+  echo "如果这就是同一个项目，把 AGENTS.local.md 找回来再跑；否则换一个 --data。" >&2
+  exit 2
+fi
+
+# 已经被 git 跟踪的 AGENTS.local.md 不会被忽略规则救回来，先让人处理
+if git -C "$PROJ" ls-files --error-unmatch AGENTS.local.md >/dev/null 2>&1; then
+  echo "拒绝：AGENTS.local.md 已被 git 跟踪，忽略规则对它无效，里面的本机路径会随提交推出去。" >&2
+  echo "确认不提交后执行：git -C \"$(winpath "$PROJ")\" rm --cached AGENTS.local.md" >&2
+  exit 2
+fi
+
+# 既有知识库如果配了远程，就不是"私有离线库"
+if [ -d "$D/kb/.git" ] && [ -n "$(git -C "$D/kb" remote 2>/dev/null)" ]; then
+  echo "拒绝：$D/kb 已经配置了远程，私有库不该有远程。先人工核对。" >&2
+  exit 2
+fi
+
+mkdir -p "$D/store" "$D/checkpoints" "$D/backups"mkdir -p "$D/kb/facts" "$D/kb/decisions" "$D/kb/runbooks" \
          "$D/kb/journal" "$D/kb/proposals" "$D/kb/archive"
 echo "  数据目录：$(winpath "$D")"
 

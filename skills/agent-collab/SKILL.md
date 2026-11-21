@@ -49,7 +49,7 @@ BEADS_ACTOR=agent-b bd -C "$STORE" update "<id-b>" --claim
 ## 并行中三条硬规则
 
 - 各自只写自己的任务 ID 和**自己的**检查点文件（一任务一文件）
-- **不同 agent 不同时改同一个未提交工作树**
+- **不同 agent 不同时改同一个未提交工作树**。如果接管时旧 agent 还在干，那就已经是并行，必须隔离 worktree——`--force` 改派任务代替不了隔离
 - **KB 单写者**：开工前点名一个人写 `kb/`，另一人只写 `proposals/`。`worktree` 隔离不了 KB——KB 是另一个 git 仓，这是最容易漏的一条
 
 ## 合并只由集成者做

@@ -32,26 +32,53 @@ function Write-Utf8NoBom([string]$path, [string]$text) {
 }
 
 function Install-One([string]$dest, [string]$s) {
+    $source = Join-Path $Repo "skills\$s"
     $target = Join-Path $dest $s
-    if ((Test-Path -LiteralPath $target) -and (-not $Force)) {
+    if ((Test-Path -LiteralPath $dest) -and ([System.IO.Path]::GetFullPath($dest).TrimEnd('\') -eq [System.IO.Path]::GetFullPath((Join-Path $Repo 'skills')).TrimEnd('\'))) {
+        throw "拒绝：安装目标就是技能源目录 $target"
+    }
+    $existing = Get-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
+    if ($existing -and ($existing.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+        if ($Force) { throw "拒绝用 -Force 拆除符号链接：$target（由 skills-manager 管理，请在那边卸载）" }
+        Write-Host "  跳过（符号链接）：$target"
+        return
+    }
+    if ($existing -and (-not $Force)) {
         Write-Host "  跳过（已存在）：$target"
         return
     }
     if (-not (Test-Path -LiteralPath $dest)) { New-Item -ItemType Directory -Path $dest -Force | Out-Null }
-    $tmp = Join-Path $dest ".$s.new.$PID"
-    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
-    Copy-Item -LiteralPath (Join-Path $Repo "skills\$s") -Destination $tmp -Recurse -Force
-    if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
-    Move-Item -LiteralPath $tmp -Destination $target
+    $stage = Join-Path $dest ('.skein-' + $s + '-' + [Guid]::NewGuid().ToString('N'))
+    try {
+        Copy-Item -LiteralPath $source -Destination $stage -Recurse -Force
+        if ($existing) { Remove-Item -LiteralPath $target -Recurse -Force }
+        Move-Item -LiteralPath $stage -Destination $target
+    } finally {
+        if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
+    }
     Write-Host "  已装：$target"
 }
 
 function Install-Globals([string]$dest) { Install-One $dest $GlobalSkill }
 
+function Invoke-Git([string[]]$gitArgs) {
+    # 原生命令往 stderr 写东西时，$ErrorActionPreference='Stop' 会把它当异常抛出，
+    # 所以这些"失败很正常"的探测统一在这里降级处理，只看退出码。
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = & git @gitArgs 2>$null
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+    return [pscustomobject]@{ Output = $out; Code = $code }
+}
+
 function Get-ExcludePath([string]$proj) {
-    $ex = & git -C $proj rev-parse --git-path info/exclude 2>$null
-    if ($LASTEXITCODE -ne 0 -or -not $ex) { return $null }
-    $ex = $ex.Trim()
+    $r = Invoke-Git @('-C',$proj,'rev-parse','--git-path','info/exclude')
+    if ($r.Code -ne 0 -or -not $r.Output) { return $null }
+    $ex = ($r.Output | Select-Object -First 1).Trim()
     if ($ex -match '^[A-Za-z]:/' -or $ex.StartsWith('/')) { return $ex }
     return (Join-Path $proj $ex)
 }
@@ -112,9 +139,9 @@ $Root = (Resolve-Path -LiteralPath $Root).Path
 $D = Join-Path $Root $Name
 
 # 私有数据不许落在代码仓里
-$top = & git -C $Proj rev-parse --show-toplevel 2>$null
-if ($LASTEXITCODE -eq 0 -and $top) {
-    $top = (Resolve-Path -LiteralPath $top.Trim()).Path
+$topR = Invoke-Git @('-C',$Proj,'rev-parse','--show-toplevel')
+if ($topR.Code -eq 0 -and $topR.Output) {
+    $top = (Resolve-Path -LiteralPath ($topR.Output | Select-Object -First 1).Trim()).Path
     $rootCmp = $Root.TrimEnd('\')
     if ($rootCmp.StartsWith($top.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
         throw "拒绝：数据家 $Root 在代码仓 $top 里面。私有知识库会被提交，可能被推送出去。换一个仓外的位置，例如 -Data ""$home_\skein-data"""
@@ -134,8 +161,28 @@ if (Test-Path -LiteralPath $Local) {
     }
 }
 
-foreach ($p in @('store','checkpoints','backups')) {
-    $full = Join-Path $D $p
+# 数据目录已经装着别的项目，而当前项目没有路由
+if ((Test-Path -LiteralPath (Join-Path $D 'kb\INDEX.md')) -and (-not (Test-Path -LiteralPath $Local))) {
+    throw "拒绝：$D 已经有知识库，但 $Proj 没有 AGENTS.local.md。若是同一个项目，把路由文件找回来再跑；否则换一个 -Data。"
+}
+
+# 已被 git 跟踪的路由文件，忽略规则救不回来
+$tracked = Invoke-Git @('-C',$Proj,'ls-files','--error-unmatch','AGENTS.local.md')
+if ($tracked.Code -eq 0) {
+    throw "拒绝：AGENTS.local.md 已被 git 跟踪，忽略规则对它无效，本机路径会随提交推出去。确认不提交后执行：git -C `"$(To-Fwd $Proj)`" rm --cached AGENTS.local.md"
+}
+
+# 既有知识库如果配了远程，就不是私有离线库
+$KbPath = Join-Path $D 'kb'
+if (Test-Path -LiteralPath (Join-Path $KbPath '.git')) {
+    $remoteR = Invoke-Git @('-C',$KbPath,'remote')
+    $remotes = @($remoteR.Output | Where-Object { $_ })
+    if ($remoteR.Code -eq 0 -and $remotes.Count -gt 0) {
+        throw "拒绝：$KbPath 已经配置了远程，私有库不该有远程。先人工核对。"
+    }
+}
+
+foreach ($p in @('store','checkpoints','backups')) {    $full = Join-Path $D $p
     if (-not (Test-Path -LiteralPath $full)) { New-Item -ItemType Directory -Path $full -Force | Out-Null }
 }
 foreach ($p in @('facts','decisions','runbooks','journal','proposals','archive')) {
