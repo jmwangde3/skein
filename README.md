@@ -98,7 +98,7 @@ AI 助手有一个绕不开的毛病：**它的记性只在一个窗口里有效
 ### 做不到（先说清楚，避免误会）
 
 - **它不会替你写代码。** 它约束的是 AI 的工作方式，不是内容。
-- **项目档案不是自动更新的。** 入口或命令变了，要有人刷新；`HEAD` 变了但引用文件没变，不用动。
+- **项目档案不是自动更新的。** 入口或命令变了，要有人刷新；巡检文件的内容哈希没变，不用动。
 - **档案可能有缺口。** 长期没动的仓只做简化建档，会标 `PARTIAL`；接手方看到它得先补，不能当成就绪。
 - **只跑脚本拿不到档案。** 脚本只建骨架，档案必须由 AI 读少量文件后写。
 - **它不替代 Git。** 版本管理还是 Git 的事。
@@ -263,7 +263,17 @@ qmd collection add "<你的知识库路径>" --name skein-kb \
 
 ### 5.1 什么叫"工作区"
 
-**一个目录 = 一个工作区，里面可以放好几个 git 仓。**
+**一个目录 = 一个工作区。它自己可以就是一个项目仓，也可以只是装了几个仓的文件夹。**
+
+单项目（最常见）：工作区根就是项目根。
+
+```
+D:/work/我的项目/          ← 工作区根，也是 git 仓根
+├── src/
+└── README.md
+```
+
+多项目：根目录只放路由文件，下面挂几个仓。
 
 ```
 H:/AI工作区/ChatGPT测试区/     ← 工作区根：放 AGENTS.local.md
@@ -272,7 +282,7 @@ H:/AI工作区/ChatGPT测试区/     ← 工作区根：放 AGENTS.local.md
 └── 笔记/                       ← 不是 git 仓也行
 ```
 
-库是**按工作区**建的，不是按仓建的。三个子项目共用一套任务库和知识库，任务标题带 `[子项目名]` 区分。
+库是**按工作区**建的，不是按仓建的。多个子项目共用一套任务库和知识库，任务标题带 `[子项目名]` 区分。
 
 技能从当前目录**向上**找第一个 `AGENTS.local.md`，命中就停。所以子目录里不要再放第二份，会遮住工作区那份。
 
@@ -280,9 +290,9 @@ H:/AI工作区/ChatGPT测试区/     ← 工作区根：放 AGENTS.local.md
 
 **路一，跟 AI 说一句话**（在工作区根目录打开客户端）：
 
-> **用 project-memory 给这个工作区建库，数据放 `D:/skein-data`**
+> **用 project-memory 给这个工作区建库，数据放 `D:/skein-data`，我要接手 `<仓名>`**
 
-它会读 `project-memory/references/init.md`：先跑技能里的 `scripts/init.sh` 建骨架，再**逐个 git 仓写一份项目档案**——这份档案才是让别的助手能直接接手的东西。
+它会读 `project-memory/references/init.md`：先跑技能里的 `scripts/init.sh` 建骨架，再给**你指定的那个仓**写一份项目档案——这份档案才是让别的助手能直接接手的东西。没说接手哪个仓，它会先问你一句。
 
 **路二，自己敲命令**（不想让 AI 动手，或者没有能跑 shell 的客户端）：
 
@@ -300,10 +310,16 @@ bash ~/.claude/skills/project-memory/scripts/init.sh \
 |---|---|---|
 | 目录、路由、知识库骨架 | 有 | 有 |
 | 机械地图（目录名、最后提交） | 有 | 有 |
-| 项目档案索引 `projects/INDEX.md` | 有，全部标 `TODO` | 有，逐个改成 `READY` / `PARTIAL` |
-| 项目档案正文 | **没有** | **每个 git 仓一份** |
+| 项目档案索引 `projects/INDEX.md` | 有，全部标 `TODO` | 有，目标仓改成 `READY` / `PARTIAL` |
+| 项目档案正文 | **没有** | **目标仓一份**；其他仓保持 `TODO`，用到再建 |
 
-只跑脚本 = 库能用，但新助手接手还得自己摸一遍。判断方法：`grep -c '| TODO |' <kb>/facts/projects/INDEX.md`，结果是 0 才算建完。
+只跑脚本 = 库能用，但新助手接手还得自己摸一遍。判断方法：看目标仓那一行是不是 `READY`。
+
+```bash
+grep -F '| `我的项目` |' <kb>/facts/projects/INDEX.md
+```
+
+其他仓还是 `TODO` 是正常的——它们没被选中，不该为了凑数写一份空档案。
 
 脚本做的事：
 
@@ -313,7 +329,7 @@ bash ~/.claude/skills/project-memory/scripts/init.sh \
 4. 只在工作区根**本身是 git 仓**时，才把它加进 `info/exclude`
 5. 建 `kb` 独立仓 + 首版 `INDEX.md` / `current.md` + 一次提交
 6. 生成工作区地图 `kb/facts/workspace-map.md`（顶层不足 3 项就跳过）
-7. 扫出所有 git 仓，建档案索引 `kb/facts/projects/INDEX.md`，每仓一行、状态 `TODO`
+7. 扫出工作区根自身和下面两层的 git 仓，建档案索引 `kb/facts/projects/INDEX.md`，每仓一行、状态 `TODO`
 8. 装了 `bd` 就顺手 `bd init`，没装就告诉你以后怎么补
 8. 打印验收用的四个路径
 
@@ -330,14 +346,15 @@ bash ~/.claude/skills/project-memory/scripts/init.sh \
 
 ### 5.3 档案长什么样
 
-每个 git 仓一份，放在 `kb/facts/projects/`，硬上限 4 KB / 70 行：
+**给要接手的那个仓写一份**，放在 `kb/facts/projects/`，硬上限 4 KB / 70 行。没被选中的仓不写，索引里留 `TODO`，用到时再建。
 
 ```markdown
 # wfa-review-20261119
 
 - 状态：READY
-- 仓库：wfa-review-20261119
+- 仓库：.
 - 基线：a1b2c3d4e5f6... · main · 工作树 clean
+- 巡检：`README.md#8f3a1c5e` `package.json#2b7e90d1` `AGENTS.md#5d1f02ab`
 - 建档：2026-11-22 01:50
 
 ## 定位
@@ -352,6 +369,7 @@ bash ~/.claude/skills/project-memory/scripts/init.sh \
 ## 运行验证
 
 - `npm test` — package.json 声明，未实测
+- 前置：Node 20（`.nvmrc`）
 
 ## 文档指针
 
@@ -363,10 +381,12 @@ bash ~/.claude/skills/project-memory/scripts/init.sh \
 - 没找到构建脚本，可能靠 `npm run build`，未核实
 ```
 
-三条规则：
+规则：
 
 - **每句话标来源**：`[源码]` 直接读到的、`[文档]` 文档里写的但没验证、`[推断]` 从命名猜的
-- **`READY` 只表示字段齐、来源明**，不表示命令跑通过
+- **`READY` 要过五条准入**：定位有依据、有可信入口、有运行方法、指针指向真实文件、关键缺口已清。字段填满不算数
+- **命令实测不是 `READY` 的前提**，但每条必须标「未实测」
+- **巡检记内容哈希**，刷新时用 `git hash-object` 重算。`HEAD` 变了但哈希没变，不用动；工作树改了又撤销，也能发现
 - **不写源码片段、不抄 README 正文、不记任务状态**——那些分别是代码、原文档、Beads 的事
 
 索引在 `projects/INDEX.md`。接手时按相对路径找自己那一份，**只读那一份**。
@@ -400,8 +420,8 @@ bash ~/.claude/skills/project-memory/scripts/init.sh \
 | 任务库能读 | `bd -C <store> list` | 不报错，可能为空 |
 | 知识库无远程 | `git -C <kb> remote -v` | **没有任何输出** |
 | 知识库已提交 | `git -C <kb> log --oneline` | 至少一条 |
-| 项目档案索引 | `cat <kb>/facts/projects/INDEX.md` | 每个 git 仓一行，状态列有值 |
-| 档案已建完 | `grep -c '\| TODO \|' <kb>/facts/projects/INDEX.md` | `0`（不是 0 说明还有仓没建档） |
+| 项目档案索引 | `cat <kb>/facts/projects/INDEX.md` | 工作区根（若是仓）加两层内的每个 git 仓一行，状态列有值 |
+| 目标仓已建档 | `grep -F '\| \`<仓名>\` \|' <kb>/facts/projects/INDEX.md` | 该行是 `READY`；`PARTIAL` 说明还差缺口 |
 
 再让 AI 试一句：**"读一下 AGENTS.local.md，告诉我 store 和 kb 分别在哪。"** 它能准确说出来，就说明路由通了。
 

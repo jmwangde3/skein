@@ -207,9 +207,22 @@ skip_dir() {
   esac
 }
 
-# 收集仓：顶层 + 第二层。判据是「有 .git（文件或目录）且 toplevel 就是自己」，
-# 这样 linked worktree（.git 是文件）能识别，父仓里的普通子目录不会被误判。
+# 收集仓：工作区根自身 + 顶层 + 第二层。路径按行存放，容忍空格。
+# 判据是「有 .git（文件或目录）且 toplevel 就是自己」，这样 linked worktree
+# （.git 是文件）能识别，父仓里的普通子目录不会被误判。
 REPO_LIST=""
+add_repo() {
+  if [ -z "$REPO_LIST" ]; then REPO_LIST="$1"; else REPO_LIST="$REPO_LIST"$'\n'"$1"; fi
+}
+is_repo_root() {
+  [ -e "$1/.git" ] || return 1
+  top="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null || true)"
+  [ -n "$top" ] || return 1
+  [ "$(cd "$top" && pwd -P)" = "$(cd "$1" && pwd -P)" ]
+}
+
+# 工作区根本身就是一个项目仓——单项目建库最常见的形态，必须先算进来
+if is_repo_root "$SCOPE"; then add_repo "."; fi
 
 # 注意：脚本开头是 set -e，所有条件都得用 if，不能写 [ x ] && continue
 for d in "$SCOPE"/*/; do
@@ -218,16 +231,12 @@ for d in "$SCOPE"/*/; do
   for cand in "$d" "$d"*/; do
     [ -d "$cand" ] || continue
     if skip_dir "$(basename "${cand%/}")"; then continue; fi
-    [ -e "$cand/.git" ] || continue
-    top="$(git -C "$cand" rev-parse --show-toplevel 2>/dev/null || true)"
-    [ -n "$top" ] || continue
-    if [ "$(cd "$top" && pwd -P)" != "$(cd "$cand" && pwd -P)" ]; then continue; fi
+    is_repo_root "$cand" || continue
     rel="${cand#"$SCOPE"/}"; rel="${rel%/}"
-    case " $REPO_LIST " in *" $rel "*) continue ;; esac
-    REPO_LIST="$REPO_LIST $rel"
+    case $'\n'"$REPO_LIST"$'\n' in *$'\n'"$rel"$'\n'*) continue ;; esac
+    add_repo "$rel"
   done
 done
-REPO_LIST="${REPO_LIST# }"
 
 if [ -z "$REPO_LIST" ]; then
   say "工作区里没有 git 仓，不建项目档案索引"
@@ -241,15 +250,20 @@ else
     printf '| 仓 | 相对路径 | 档案 | 状态 | 基线 HEAD |\n'
     printf '|---|---|---|---|---|\n'
     n=0
-    for rel in $REPO_LIST; do
-      base="$(basename "$rel")"
+    while IFS= read -r rel; do
+      [ -n "$rel" ] || continue
+      if [ "$rel" = "." ]; then base="$(basename "$SCOPE")"; else base="$(basename "$rel")"; fi
       file="$base.md"
       # 同名仓加路径 hash，避免互相覆盖
       dup=0
-      for other in $REPO_LIST; do
+      while IFS= read -r other; do
+        [ -n "$other" ] || continue
         if [ "$other" = "$rel" ]; then continue; fi
-        if [ "$(basename "$other")" = "$base" ]; then dup=1; break; fi
-      done
+        if [ "$other" = "." ]; then obase="$(basename "$SCOPE")"; else obase="$(basename "$other")"; fi
+        if [ "$obase" = "$base" ]; then dup=1; break; fi
+      done <<EOF
+$REPO_LIST
+EOF
       if [ "$dup" -eq 1 ]; then file="$base-$(printf '%s' "$rel" | hash8).md"; fi
 
       st="TODO"; sha="-"
@@ -261,7 +275,9 @@ else
       fi
       printf '| `%s` | `%s` | `%s` | %s | %s |\n' "$base" "$rel" "$file" "$st" "$sha"
       n=$((n + 1))
-    done
+    done <<EOF
+$REPO_LIST
+EOF
     printf '\n共 %d 个仓。未建档的项：`grep "| TODO |" INDEX.md`\n' "$n"
   } > "$tmp"
   mv -f "$tmp" "$IDX"

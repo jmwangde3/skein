@@ -22,10 +22,14 @@ done
 kv() { sed -n "s/^$1:[[:space:]]*//p" "$SCOPE/AGENTS.local.md" | head -n 1 | tr -d '\r'; }
 KB="$(kv kb)"; [ -n "$KB" ] || { echo "[HANDOFF_GAP] 缺 kb 键"; exit 1; }
 REPO="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)"
+[ -n "$REPO" ] || { echo "[HANDOFF_GAP] 当前目录不在任何 git 仓里"; exit 1; }
 
-# 在索引里按相对路径找自己
-REL="${REPO#"$SCOPE"/}"
-grep -F "\`$REL\`" "$KB/facts/projects/INDEX.md"
+# 工作区根自己就是仓根时，索引里的相对路径是 "."
+REPO_N="$(cd "$REPO" && pwd -P)"
+if [ "$REPO_N" = "$SCOPE" ]; then REL="."; else REL="${REPO_N#"$SCOPE"/}"; fi
+
+grep -F "| \`$REL\` |" "$KB/facts/projects/INDEX.md" \
+  || { echo "[HANDOFF_GAP] 索引里没有 $REL。可能扫库时这个仓还不存在，或工作区根指错了"; exit 1; }
 ```
 
 拿到档案文件名后**只读那一份**，不要把 `projects/` 下所有档案一起读。
@@ -36,7 +40,7 @@ grep -F "\`$REL\`" "$KB/facts/projects/INDEX.md"
 |---|---|---|
 | `READY` | 按档案定位入口、跑验证、等任务 | 把档案当事实：先核 HEAD 与工作树 |
 | `PARTIAL` | 读档案，先补齐影响本次任务的缺口 | 假装缺口不存在 |
-| `TODO` | 只做最小摸底（README + 目录两层），先建档 | 直接改代码、宣称已经理解项目 |
+| `TODO` | 只做最小摸底（README + 目录两层），按 `project-memory/references/brief.md` 建档，再开工 | 直接改代码、宣称已经理解项目 |
 | 索引里没有这个仓 | 报 `[HANDOFF_GAP]`，说明这是新仓 | 自己编一份档案顶上 |
 
 ### 0.3 六条冷启动规则

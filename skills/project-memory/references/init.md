@@ -4,7 +4,7 @@
 
 ## 两种用法，结果不同
 
-**用技能（完整建库）**：在工作区根对 AI 说「用 project-memory 给这个工作区建库，数据放 `D:/skein-data`」。AI 读本文件，先跑脚本，再按「逐仓建档」把每个 git 仓写成一份档案。
+**用技能（完整建库）**：在工作区根对 AI 说「用 project-memory 给这个工作区建库，数据放 `D:/skein-data`，我要接手 `<仓名>`」。AI 读本文件，先跑脚本，再按「逐仓建档」给**目标仓**写成一份档案。
 
 **自己跑脚本（只有骨架）**：在终端里执行同一条命令，技能目录换成你客户端的真实位置：
 
@@ -53,7 +53,7 @@ done
 6. 工作区根**本身是 git 仓**时，把 `AGENTS.local.md` 写进 `.git/info/exclude`
 7. `kb` 独立 `git init`，写首版 `INDEX.md` / `current.md`
 8. 生成工作区地图 `kb/facts/workspace-map.md`（顶层不足 3 项就跳过）
-9. 生成项目档案索引 `kb/facts/projects/INDEX.md`：每个 git 仓一行，状态全标 `TODO`
+9. 生成项目档案索引 `kb/facts/projects/INDEX.md`：工作区根自身（如果它就是一个 git 仓）加下面两层的每个 git 仓，一行一个，状态全标 `TODO`
 10. 装了 `bd` 就 `bd init`，没装就提示怎么补
 
 ## 工作区地图
@@ -79,39 +79,63 @@ done
 
 ## 逐仓建档（脚本做不了这一段）
 
-脚本跑完只是骨架。要让人能直接接手，还得给每个 git 仓写一份档案。
+脚本跑完只是骨架。要让人能直接接手，还得给**目标仓**写一份档案。
 
 规则、模板、上限、黑名单全在 `references/brief.md`，这里只说流程。
 
+### 先定目标仓
+
+**这一步不能跳过，也不能靠活跃度猜。**
+
+- 工作区只有一个仓 → 就是它
+- 用户说了「我要接手 X」→ 就是 X
+- 用户没说、仓又有多个 → **问一句**「这次要接手哪个仓」，不要自作主张把所有仓都建一遍
+- 用户要批量预建档 → 才按 `brief.md` 的三条判据筛选「先建哪些」，其余留 `TODO`
+
+目标仓**直接完整建档，不看提交时间**。两年没动的仓最需要这份档案。
+
+### 索引里怎么认仓
+
+- **相对路径是 `.`**：工作区根自己就是项目仓（单项目建库的常见形态），档案文件名用工作区目录名
+- **`group/alpha`**：第二层的仓，档案文件名用 `<仓名>.md`；同名仓自动带路径 hash
+- **扫到第二层为止**：第三层及更深的仓不进索引。真有需要，把工作区根指到更近的那层，或在 `facts/` 里手工补一条
+- **linked worktree 和子模块**：`.git` 是文件也算仓；子模块单独成行，按普通仓建档
+
 ### 顺序
 
-1. 读 `kb/facts/projects/INDEX.md`，取出所有状态为 `TODO` 的行
-2. 逐仓判断要不要读代码（分档规则见 `brief.md`）：
-   - 当前任务涉及这个仓 → 完整建档
-   - 工作树有未提交改动 → 完整建档
-   - 任一本地分支 90 天内有提交 → 完整建档
-   - 都不满足 → 简化建档，只写头部 + 定位 + 文档指针，状态 `PARTIAL`
-3. 完整建档按这个顺序读，**读到能填满字段就停，不要继续深挖**：
+1. 读 `kb/facts/projects/INDEX.md`，找到目标仓那一行
+2. **按 `brief.md` 读，读到「有足够证据可信地填写必需字段」就停**，不是「把模板空格填满」就停。用推断填满再标 `READY` 是最坏的结果
+3. 读取顺序（每项读到够用就停）：
+   - 项目规则文件：`AGENTS.md` / `CLAUDE.md` / `.cursorrules` / `CONTRIBUTING.md`——有就读，agent 最需要的往往是这些约束，不是 README
    - `README.md`：前 60 行，找「是什么」和「怎么跑」
-   - `package.json` / `pyproject.toml` / `Makefile` / `Cargo.toml`：只取 scripts / test / build 相关键
-   - 目录结构：只看两层，不列全量
-   - 最多 3 个入口文件：只读开头 40 行，确认它是不是入口
-4. 写 `<仓名>.md.tmp` → 校验（必填字段、≤ 4 KB / 70 行）→ 改名为正式文件
-5. 改 `INDEX.md` 的状态与基线
-6. `git -C <kb> commit -m "kb: 建档 <仓名>"`
+   - 清单文件（`package.json` / `pyproject.toml` / `Cargo.toml` / `Makefile`）：**按结构取键，不套行数上限**。`package.json` 用 `node -e 'const p=require("./package.json");console.log(JSON.stringify({name:p.name,version:p.version,bin:p.bin,main:p.main,scripts:p.scripts},null,1))'`；`pyproject.toml` / `Cargo.toml` 用 `grep -nE '^\[|^(name|version|scripts)'`；`Makefile` 取 `^[A-Za-z0-9_.-]+:` 的目标名。这些文件常超过 400 行，`scripts` 就在后半段
+   - 目录结构：只看两层；根目录只有 workspace 声明（monorepo）时，按 `workspaces` 或 `apps/` `packages/` 再多看一层
+   - 最多 3 个入口文件：先 `grep -nE 'int main|if __name__|func main|\.listen\(|createServer|program\.command'` 找候选，再读候选文件的相关片段。**不要指望入口在前 40 行**——Python 的 `__main__` 在末尾，TS 的路由注册常在百行之后
+   - 环境前置（有就取，没有就跳过）：`.nvmrc` / `.python-version` 取版本号；`.env.example` 只取变量名；`docker-compose.yml` 只取服务名与端口；`.github/workflows/*.yml` 只取 `run:` 行
+4. 入口或运行方式还没找到时，**允许一次定向补读**：针对已经发现的线索去找（比如 README 提到 `docker compose up` 就去看 compose 文件），不要重新全仓扫一遍
+5. 按 `brief.md` 的写入顺序落盘：临时文件 → 校验（含 `READY` 五条准入）→ 原子改名 → 更新索引 → 限定路径 `git add` + `commit --only` → 检查退出码
 
 ### 预算
 
-- 单仓累计摘取 **不超过 8 KiB 文本**。超了就停，没读的部分写进「缺口」
-- 读大文件前先看行数；超过 400 行只读前 40 行 + 目录
+- 单仓累计摘取 **不超过 8 KiB 文本**。超了就停，没读的部分写进「缺口」，状态标 `PARTIAL`
+- 读大文件前先看行数；超过 400 行只读前 40 行 + 目录。**清单文件是例外**，按结构取键，不受这条限制
+- 定向补读最多一次，仍不够就带着缺口收尾——**不允许用推断把缺口补成 `READY`**
 
 ### 完成判据
 
+看**目标仓**那一行，不是看全表：
+
 ```bash
-grep -c '| TODO |' "$KB/facts/projects/INDEX.md"    # 应为 0
+grep -F '| `'"$TARGET"'` |' "$KB/facts/projects/INDEX.md"
 ```
 
-不为 0 就是「库已建、档案未建」。**接手方看到 `TODO` 或 `PARTIAL` 必须知道这不是就绪状态**：`TODO` 要现场摸，`PARTIAL` 要补缺口。
+| 结果 | 含义 |
+|---|---|
+| 目标仓 `READY` | 建完了，可以宣布「接手准备完成」 |
+| 目标仓 `PARTIAL` | 建了一半，把缺口原样报给用户 |
+| 目标仓还是 `TODO` | 没建，不要说「库已建好」 |
+
+其他仓保持 `TODO` 是正常的，不是缺陷。**`grep -c '| TODO |'` 不再作为完成判据**——那是「全部预建档」才需要的。
 
 ### 中断了怎么办
 
@@ -125,9 +149,9 @@ grep -c '| TODO |' "$KB/facts/projects/INDEX.md"    # 应为 0
 
 ### 多仓工作区
 
-8 个仓就是 8 次循环，**每次独立写盘并提交**。不要攒到最后一起写——中途断掉会全丢。
+批量预建档时，**每次独立写盘并提交**。不要攒到最后一起写——中途断掉会全丢。
 
-只建了常用的那个仓、其余仍是 `TODO`，是允许的中间状态，但要在 `current.md` 里写清「已建 X，未建 Y」。
+只建了目标仓、其余仍是 `TODO`，是正常状态，在 `current.md` 里写清「已建 X，未建 Y」。
 
 ## 它会拒绝的情况
 
@@ -154,8 +178,9 @@ grep -c '| TODO |' "$KB/facts/projects/INDEX.md"    # 应为 0
 | 库已提交 | `git -C <kb> log --oneline` | 至少一条 |
 | 任务库 | `bd -C <store> list` | 不报错（没装 bd 可跳过） |
 | 地图 | `head -8 <kb>/facts/workspace-map.md` | 有生成时间和表格；顶层不足 3 项时没有这个文件 |
-| 档案索引 | `cat <kb>/facts/projects/INDEX.md` | 每个 git 仓一行；状态列是 `TODO` / `PARTIAL` / `READY` |
-| 档案齐否 | `grep -c '\| TODO \|' <kb>/facts/projects/INDEX.md` | `0` = 全部建完；大于 0 = 还有仓没建档 |
+| 档案索引 | `cat <kb>/facts/projects/INDEX.md` | 工作区根自身（若是仓）加两层的每个 git 仓一行；状态列是 `TODO` / `PARTIAL` / `READY` |
+| 目标仓建档 | `grep -F '\| \`<目标仓名>\` \|' <kb>/facts/projects/INDEX.md` | 该行是 `READY`；`PARTIAL` 要带缺口，`TODO` = 没建 |
+| 档案上限 | `wc -c -l <kb>/facts/projects/*.md` | 单份 ≤ 4 KB / 70 行 |
 
 再让 AI 说一句：「读一下 `AGENTS.local.md`，告诉我 store 和 kb 在哪。」说得对就通了。
 
@@ -163,7 +188,7 @@ grep -c '| TODO |' "$KB/facts/projects/INDEX.md"    # 应为 0
 
 库的内容（分类、事实、决策、真实提交）归本技能继续管，脚本只建骨架：
 
-- **项目档案**：改过入口、命令或约束，用 `brief.md` 的刷新规则按需更新；`HEAD` 变了但引用文件没变，不用动
+- **项目档案**：改过入口、命令或约束，用 `brief.md` 的刷新规则按需更新；巡检文件的内容哈希没变，不用动
 - 新事实写 `facts/`，新决策写 `decisions/`，可复用步骤写 `runbooks/`
 - `INDEX.md` 超过 1000 tokens 就该整理，读 `references/curate.md`
 - 旧库搬进来读 `references/migration.md`
@@ -176,4 +201,7 @@ grep -c '| TODO |' "$KB/facts/projects/INDEX.md"    # 应为 0
 - **两个同名工作区共用一个数据目录。** 比如 `D:/a/项目` 和 `E:/b/项目`；`.skein-scope` 会拦住，换 `--data` 即可，别手工删标记
 - **手工往地图里加备注。** 下次 `init.sh` 会把整张表覆盖掉；说明写到 `facts/workspace-notes.md`
 - **把档案写成第二份 README。** 超过 4 KB / 70 行就是写多了，细节留指针，不复制正文
-- **只跑脚本就以为建完了。** 档案索引还是 `TODO` 就说明没建完，新 agent 接手仍要现场摸
+- **只跑脚本就以为建完了。** 目标仓那行还是 `TODO` 就没建完，新 agent 接手仍要现场摸
+- **没定目标仓就开始逐仓建档。** 先问「这次接手哪个」，再动手；不要靠活跃度猜
+- **给不用的仓写 PARTIAL 占位。** 没有入口和命令的档案比 `TODO` 更糟——它看起来建过了。没用到的仓保持 `TODO`
+- **用推断把模板填满再标 `READY`。** `READY` 的五条准入条件不成立，就必须是 `PARTIAL`
