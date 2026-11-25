@@ -11,6 +11,16 @@ description: 要把任务交给另一个 Agent（handoff）、作为陌生或返
 
 **不做**：日常进度落盘（`task-checkpoint`）、并行分支合并（`agent-collab`）、建库（`project-memory`）。
 
+## 先判：要不要写 handoff
+
+| 场景 | 写什么 |
+|---|---|
+| 同一个 agent 新开会话 / 换天 / 重启 | **检查点**，不写 handoff |
+| 换另一个 agent、换机器、换人 | handoff |
+| 用户说「写 handoff」但仍是自己接着干 | 写检查点 + 一页指针（任务 ID、检查点路径、未决事项），不复制状态 |
+
+handoff 只解决「接手的人看不到你的上下文」；同一 agent 的下一轮读检查点就够，写 handoff 是重复。
+
 ## 接手由 B 发起，A 不必交棒
 
 用户说「让 B 接手」时，**A 不需要先写检查点、不需要 `unclaim`、不需要通知任何人**。B 自己看现场决定动作：
