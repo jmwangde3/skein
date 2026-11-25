@@ -132,7 +132,7 @@ if [ ! -f "$SNIP" ]; then
   warn "没找到 a 层主本：~/.workbuddy/agent-memory-snippet.md"
 else
   stale=""
-  for f in "$HOME/.codex/AGENTS.md" "$HOME/.workbuddy/AGENTS.md" "$HOME/.claude/CLAUDE.md"; do
+  for f in "$HOME/.codex/AGENTS.md" "$HOME/.workbuddy/AGENTS.md" "$HOME/.claude/CLAUDE.md" "$HOME/.codebuddy/CODEBUDDY.md"; do
     [ -f "$f" ] || continue
     [ "$SNIP" -nt "$f" ] && stale="$stale $(basename "$(dirname "$f")")/$(basename "$f")"
   done
