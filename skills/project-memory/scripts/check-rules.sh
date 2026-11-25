@@ -54,6 +54,7 @@ else
   pass "b 层存在"
   grep -q "AGENTS.local.md" "$B" && pass "b 指向路径文件" || fail "b 没提 AGENTS.local.md"
   grep -q "HANDOFF_GAP" "$B" && pass "b 有缺失兜底" || fail "b 没写「AGENTS.local.md 缺失或没有 kb 键 → 报 HANDOFF_GAP」"
+  grep -q "<!-- skein-rules -->" "$B" && pass "b 层有收尾纪律" || warn "b 层缺 <!-- skein-rules --> 收尾纪律（重跑 init.sh 可补）"
 fi
 
 # ---- 第二个规则文件 ----

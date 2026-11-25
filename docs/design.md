@@ -191,7 +191,9 @@ Git 只报"同一段冲突"。两个人改不同文件不会冲突；改同一�
 
 **同一个 agent 新开会话不写 handoff。** 检查点就是给下一轮的自己看的；handoff 只给另一个 agent 或另一台机器。用户说「写 handoff」但仍是自己接着干时，写检查点 + 一页指针。
 
-**a 层必须真的送进宿主。** 这些规则原先只发到 `~/.workbuddy/AGENTS.md`，而 CodeBuddy/WorkBuddy 的用户级记忆是 `~/.codebuddy/CODEBUDDY.md`——规则写了但没进上下文，等于没写。分发脚本现已把这个路径加进目标列表。
+**规则放在 b 层，不放在 a 层。** 检查点依赖 `AGENTS.local.md` 的 `checkpoints` 键，只有建了 Skein 库的工作区才有；写进全局会让没有库的项目照着做，然后报 `[HANDOFF_GAP]`。`init.sh` 建库时把 `<!-- skein-rules -->` 块写进 `<工作区>/AGENTS.md`（可重复执行，不会重复追加）。全局 §6 只留一句「按项目定义的机制落盘」。
+
+顺带修了一个分发缺口：`~/.codebuddy/CODEBUDDY.md` 原先不在同步目标里，CodeBuddy/WorkBuddy 的用户级记忆收不到 a 层。现在已加入。
 
 ## 5. 被否掉的方案
 

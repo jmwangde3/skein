@@ -51,10 +51,11 @@ done
 4. 写归属标记 `.skein-scope`（内容是工作区绝对路径）
 5. 工作区根没有 `AGENTS.local.md` 才写；已有就沿用并只核对键
 6. 工作区根**本身是 git 仓**时，把 `/AGENTS.local.md` 写进 `.gitignore`（这个文件要提交，换机才继续生效；不要只写 `.git/info/exclude`，克隆不带走）
-7. `kb` 独立 `git init`，写首版 `INDEX.md` / `current.md`
-8. 生成工作区地图 `kb/facts/workspace-map.md`（顶层不足 3 项就跳过）
-9. 生成项目档案索引 `kb/facts/projects/INDEX.md`：工作区根自身（如果它就是一个 git 仓）加下面两层的每个 git 仓，一行一个，状态全标 `TODO`
-10. 装了 `bd` 就 `bd init`，没装就提示怎么补
+7. 在 `<工作区>/AGENTS.md` 写入或更新 `<!-- skein-rules -->` 收尾纪律块；没有 `AGENTS.md` 就建一份。**这段只进 b 层**，不写全局——没有 Skein 库的项目不该看到它
+8. `kb` 独立 `git init`，写首版 `INDEX.md` / `current.md`
+9. 生成工作区地图 `kb/facts/workspace-map.md`（顶层不足 3 项就跳过）
+10. 生成项目档案索引 `kb/facts/projects/INDEX.md`：工作区根自身（如果它就是一个 git 仓）加下面两层的每个 git 仓，一行一个，状态全标 `TODO`
+11. 装了 `bd` 就 `bd init`，没装就提示怎么补
 
 ## 工作区地图
 

@@ -119,7 +119,42 @@ for k in store checkpoints kb worktree_root; do
 done
 grep -qE '^(scope|project):' "$LOCAL" || gap "$(wp "$LOCAL") 缺键：scope"
 
-## 4. 写忽略（.gitignore 随仓库走，换机也生效）
+## 4. 收尾纪律（写进 b 层 AGENTS.md）
+B="$SCOPE/AGENTS.md"
+BLOCK_FILE="$(mktemp 2>/dev/null || echo "$SCOPE/.skein-block.$$")"
+cat > "$BLOCK_FILE" <<'EOF'
+<!-- skein-rules -->
+## Skein 收尾纪律
+
+- 长任务在阶段完成、决策推翻旧做法、遇阻，或用户说「先到这 / 新开会话 / 明天继续」时，**主动**更新检查点，不等提醒。
+- 同一个 agent 新开会话只写/读检查点，不写 handoff；handoff 只给另一个 agent 或另一台机器。用户说「写 handoff」但仍是自己接着干 → 检查点 + 一页指针。
+- 长任务回复末尾报 `检查点：<路径>` 或 `检查点：无（原因）`。
+- 路径从 `AGENTS.local.md` 的 `checkpoints` 键读；缺键报 `[HANDOFF_GAP]`。
+- 任务状态只在 Beads，检查点不复制状态。
+- 做法（模板、rev、写入协议）见 `task-checkpoint` 技能；本块只写时机和不变量。
+<!-- /skein-rules -->
+EOF
+if [ ! -f "$B" ]; then
+  printf '# 工作区规则 — %s\n\n' "$NAME" > "$B"
+  say "已建 b 层：$(wp "$B")"
+fi
+if grep -q '<!-- skein-rules -->' "$B"; then
+  BLOCK_FILE="$BLOCK_FILE" awk '
+    BEGIN { while ((getline line < ENVIRON["BLOCK_FILE"]) > 0) block = block line ORS }
+    /<!-- skein-rules -->/ { printf "%s", block; skip = 1; next }
+    /<!-- \/skein-rules -->/ { skip = 0; next }
+    !skip { print }
+  ' "$B" > "$B.skein.$$" && mv -f "$B.skein.$$" "$B"
+  say "已更新收尾纪律：$(wp "$B")"
+else
+  [ -s "$B" ] && [ -n "$(tail -c1 "$B")" ] && echo >> "$B"
+  printf '\n' >> "$B"
+  cat "$BLOCK_FILE" >> "$B"
+  say "已写入收尾纪律：$(wp "$B")（要提交）"
+fi
+rm -f "$BLOCK_FILE"
+
+## 5. 写忽略（.gitignore 随仓库走，换机也生效）
 if [ -e "$SCOPE/.git" ]; then
   if git -C "$SCOPE" ls-files --error-unmatch AGENTS.local.md >/dev/null 2>&1; then
     gap "AGENTS.local.md 已被 git 跟踪，忽略规则救不回来。先 git rm --cached AGENTS.local.md 再重跑"
@@ -134,7 +169,7 @@ if [ -e "$SCOPE/.git" ]; then
   fi
 fi
 
-## 5. 知识库
+## 6. 知识库
 KB="$D/kb"
 [ -e "$KB/.git" ] || git -C "$KB" init -q
 if [ -n "$(git -C "$KB" remote 2>/dev/null || true)" ]; then
@@ -294,7 +329,7 @@ if ! git -C "$KB" diff --cached --quiet; then
   say "知识库已提交（$MSG）"
 fi
 
-## 6. 任务库（可选）
+## 7. 任务库（可选）
 if command -v bd >/dev/null 2>&1; then
   if [ ! -d "$D/store/.beads" ]; then
     if ( cd "$D/store" && bd init --prefix "$PREFIX" --non-interactive --stealth --skip-agents >/dev/null 2>&1 ); then
@@ -307,7 +342,7 @@ else
   say "没装 bd，任务库留空。装好后在 $(wp "$D/store") 里跑 bd init --prefix $PREFIX"
 fi
 
-## 7. 收尾
+## 8. 收尾
 say ""
 say "完成。自检："
 printf '  %-10s %s\n' "路由" "$(wp "$LOCAL")"
