@@ -62,6 +62,17 @@ for f in RULES.md CONVENTIONS.md NOTES.md GUIDELINES.md STYLE.md MEMORY.md; do
   fi
 done
 
+# 文件名里带 rule / 规则 的，一律按规则文件处理
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  base="$(basename "$f")"
+  case "$base" in
+    AGENTS.md|AGENTS.local.md|CLAUDE.md|GEMINI.md|CODEBUDDY.md) continue ;;
+  esac
+  size="$(wc -c < "$f" | tr -d ' ')"
+  fail "疑似规则文件：$base（${size}B）——规则并进 a/b/c/d，原文进 <kb>/archive/"
+done < <(find "$SCOPE" -maxdepth 1 -type f \( -iname "*rule*" -o -iname "*规则*" \) | sort)
+
 # 客户端入口只允许短指针
 for f in CLAUDE.md GEMINI.md CODEBUDDY.md; do
   [ -f "$SCOPE/$f" ] || continue

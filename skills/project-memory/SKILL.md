@@ -110,7 +110,7 @@ proposals/<日期>-<子项目>-<主题>.md
 | `references/migration.md` | 旧库迁进来 |
 | `references/curate.md` | `INDEX.md` 超 1000 tokens、`facts/` 出现矛盾、`journal/` 超 200 行 |
 
-规则体检用 `scripts/check-rules.sh <工作区根>`：只读，查 c 层键、b→c 兜底、第五个规则文件、忽略规则、b/c 重复、a 层是否分发。
+规则体检用 `scripts/check-rules.sh <工作区根>`：只读，查 c 层键、b→c 兜底、第五个规则文件（含文件名带 `rule` / `规则` 的）、忽略规则、b/c 重复、a 层是否分发。
 
 ## 完成标志
 
