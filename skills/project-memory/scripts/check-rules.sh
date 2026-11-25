@@ -73,6 +73,16 @@ while IFS= read -r f; do
   fail "疑似规则文件：$base（${size}B）——规则并进 a/b/c/d，原文进 <kb>/archive/"
 done < <(find "$SCOPE" -maxdepth 1 -type f \( -iname "*rule*" -o -iname "*规则*" \) | sort)
 
+# kb 根也不该出现规则文件
+if [ -n "$KB" ] && [ -d "$KB" ]; then
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    base="$(basename "$f")"
+    case "$base" in README.md) continue ;; esac
+    fail "kb 根出现规则文件：$base——规则归 a/b/c/d，材料进 decisions/facts/runbooks"
+  done < <(find "$KB" -maxdepth 1 -type f \( -iname "*rule*" -o -iname "*规则*" \) | sort)
+fi
+
 # 客户端入口只允许短指针
 for f in CLAUDE.md GEMINI.md CODEBUDDY.md; do
   [ -f "$SCOPE/$f" ] || continue
