@@ -89,14 +89,16 @@ if [ -n "$KB" ] && [ -d "$KB" ]; then
   done < <(find "$KB" -maxdepth 1 -type f \( -iname "*rule*" -o -iname "*规则*" \) | sort)
 fi
 
-# 客户端入口只允许短指针
+# 客户端入口：必须是客户端能解析的导入，散文指针不算
 for f in CLAUDE.md GEMINI.md CODEBUDDY.md; do
   [ -f "$SCOPE/$f" ] || continue
   size="$(wc -c < "$SCOPE/$f" | tr -d ' ')"
-  if [ "$size" -gt 500 ] || ! grep -q "AGENTS.local.md" "$SCOPE/$f"; then
-    fail "$f 不是有效指针（${size}B）：应 ≤500B 且指向 AGENTS.md / AGENTS.local.md"
+  if grep -qE '^@(\./)?AGENTS\.md[[:space:]]*$' "$SCOPE/$f"; then
+    pass "$f 导入 AGENTS.md"
+  elif [ "$size" -le 500 ] && grep -q "AGENTS.local.md" "$SCOPE/$f"; then
+    warn "$f 是散文指针（${size}B），客户端不会自动加载 AGENTS.md；改成 @AGENTS.md"
   else
-    pass "$f 是指针"
+    fail "$f 既不是导入也不是短指针（${size}B）"
   fi
 done
 

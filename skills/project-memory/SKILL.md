@@ -25,6 +25,8 @@ description: 需要按需检索项目知识库、回读某个结论的原文、�
 
 工作区根自己就是项目仓时，b 和 c 是同一个文件。
 
+**客户端入口必须真导入。** `CLAUDE.md` / `GEMINI.md` / `CODEBUDDY.md` 只写一行 `@AGENTS.md`（Gemini 写 `@./AGENTS.md`）。写成「按 AGENTS.md 执行」的散文指针，客户端不会自己去加载——Claude Code 有 `CLAUDE.md` 就不读 `AGENTS.md`，Gemini CLI 默认只认 `GEMINI.md`，CodeBuddy 有 `CODEBUDDY.md` 就不读 `AGENTS.md`。Codex / Cursor / Copilot 原生读 `AGENTS.md`，不需要入口文件。
+
 **`AGENTS.local.md` 不是规则层。** 它只放本机路径（`kb` / `store` / `checkpoints` / `worktree_root` / `backups`），不进 Git，缺失就报 `[HANDOFF_GAP]`。往它里面写规则，等于制造第二份项目规则。
 
 **a 层不直接改客户端文件。** 主本是 snippet，改完跑 `H:\AI工作区\agent-workspace-bridge\sync-agent-memory.ps1 -Update` 分发；直接改 `~/.codex/AGENTS.md` 会在下次同步时被覆盖。`MEMORY.md` 是跨项目记忆索引，不是规则的副本。
@@ -108,7 +110,7 @@ proposals/<日期>-<子项目>-<主题>.md
 | `references/migration.md` | 旧库迁进来 |
 | `references/curate.md` | `INDEX.md` 超 1000 tokens、`facts/` 出现矛盾、`journal/` 超 200 行 |
 
-规则体检用 `scripts/check-rules.sh <工作区根>`：只读，查路径文件键与串层、b→路径兜底、第二个规则文件（含文件名带 `rule` / `规则` 的）、忽略规则、重复长句、a 层是否分发。
+规则体检用 `scripts/check-rules.sh <工作区根>`：只读，查路径文件键与串层、b→路径兜底、第二个规则文件（含文件名带 `rule` / `规则` 的）、客户端入口是不是真导入、忽略规则、重复长句、a 层是否分发。
 
 ## 完成标志
 
