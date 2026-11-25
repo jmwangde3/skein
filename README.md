@@ -326,7 +326,7 @@ grep -F '| `我的项目` |' <kb>/facts/projects/INDEX.md
 1. 扫一遍子目录有没有第二份 `AGENTS.local.md`（有就停下列清单，不删别人的）
 2. 建 `<数据家>/<工作区名>/{store,checkpoints,kb,backups,worktrees}`，写归属标记 `.skein-scope`（防止两个同名工作区共用一份库）
 3. 写工作区根的 `AGENTS.local.md`（五个键，已有就沿用并只核对）
-4. 只在工作区根**本身是 git 仓**时，才把它加进 `info/exclude`
+4. 只在工作区根**本身是 git 仓**时，才把 `/AGENTS.local.md` 加进 `.gitignore`（随仓库提交，换机后才继续生效）
 5. 建 `kb` 独立仓 + 首版 `INDEX.md` / `current.md` + 一次提交
 6. 生成工作区地图 `kb/facts/workspace-map.md`（顶层不足 3 项就跳过）
 7. 扫出工作区根自身和下面两层的 git 仓，建档案索引 `kb/facts/projects/INDEX.md`，每仓一行、状态 `TODO`
@@ -520,11 +520,11 @@ bd -C "D:/skein-data/我的项目/store" list
 说明忽略规则没生效。补一条：
 
 ```bash
-echo "/AGENTS.local.md" >> .git/info/exclude
+echo "/AGENTS.local.md" >> .gitignore
 git rm --cached AGENTS.local.md
 ```
 
-用 `.git/info/exclude` 而不是 `.gitignore`，是因为它只影响你这台机器，不会跟着仓库公开。
+用 `.gitignore` 而不是 `.git/info/exclude`：exclude 不随克隆走，换机后忽略规则就没了。`.gitignore` 里只有文件名，不含路径或凭证。
 
 ### 知识库被推到网上了
 
