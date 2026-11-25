@@ -19,12 +19,16 @@ description: 需要按需检索项目知识库、回读某个结论的原文、�
 
 | 层 | 落地 | 管什么 | 进 Git |
 |---|---|---|---|
-| a 全局 | 用户级 agent 规则（`MEMORY.md` 等） | 语言、编码习惯、安全边界、跨工作区通用 | 各客户端管 |
+| a 全局 | `~/.workbuddy/agent-memory-snippet.md`（主本）→ 各客户端 `AGENTS.md` | 语言、编码习惯、安全边界、跨工作区通用 | 各客户端管 |
 | b 工作区 | `<工作区>/AGENTS.md` | 这个工作区怎么干活：技术栈、发布闸门、禁止事项 | 进 |
-| c 库 | `<工作区>/AGENTS.local.md` + `<kb>/INDEX.md` | 库路径、读写入口、本工作区例外 | 不进（本机私有） |
+| c 库 | `<工作区>/AGENTS.local.md` | 库路径与本工作区例外 | 不进（本机私有） |
 | d 项目 | `<仓>/AGENTS.md` | 单个仓的约束 | 进各自仓 |
 
 「如果有」：b 和 d 可以没有；a 各客户端不同；c 建库后必有。
+
+**a 层不直接改客户端文件。** 主本是 snippet，改完跑 `H:\AI工作区\agent-workspace-bridge\sync-agent-memory.ps1 -Update` 分发；直接改 `~/.codex/AGENTS.md` 会在下次同步时被覆盖。`MEMORY.md` 是跨项目记忆索引，不是规则的副本。
+
+**c 层只放路径和例外。** 接手顺序、写回位置、检索阶梯都是流程，归技能；`<kb>/INDEX.md` 是可重建的索引，不算规则层。
 
 **技能正文不算一层。** 技能管「怎么做」——检索阶梯、检查点模板、写入协议，跨工作区不变。这四层管「这个项目允许什么、禁止什么」，每个工作区不同。
 
@@ -96,7 +100,7 @@ proposals/<日期>-<子项目>-<主题>.md
 
 **为什么必须这样**：Git 只报「同段冲突」。改不同文件不冲突；改同一文件不同行自动合并且不报错——语义覆盖会静默发生，事后查不出来。
 
-## 四个 references，按需读
+## 五个 references，按需读
 
 | 文件 | 什么时候读 |
 |---|---|
@@ -105,6 +109,8 @@ proposals/<日期>-<子项目>-<主题>.md
 | `references/search.md` | 要完整命令、`es` 乱码、`qmd` mask 报错、判断该不该开 QMD |
 | `references/migration.md` | 旧库迁进来 |
 | `references/curate.md` | `INDEX.md` 超 1000 tokens、`facts/` 出现矛盾、`journal/` 超 200 行 |
+
+规则体检用 `scripts/check-rules.sh <工作区根>`：只读，查 c 层键、b→c 兜底、第五个规则文件、忽略规则、b/c 重复、a 层是否分发。
 
 ## 完成标志
 

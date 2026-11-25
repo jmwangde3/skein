@@ -13,12 +13,18 @@
 
 | 层 | 文件 | 管什么 |
 |---|---|---|
-| a 全局 | 用户级 agent 规则（`MEMORY.md` 等） | 语言、编码、安全边界 |
-| b 工作区 | `AGENTS.md` | 这个工作区怎么干活 |
-| c 库 | `AGENTS.local.md` + `<kb>/INDEX.md` | 库路径、读写入口、本工作区例外 |
+| a 全局 | `~/.workbuddy/agent-memory-snippet.md`（主本）→ 各客户端 `AGENTS.md` | 语言、编码、安全边界 |
+| b 工作区 | `AGENTS.md` | 项目硬约束 |
+| c 库 | `AGENTS.local.md` | 库路径与本工作区例外 |
 | d 项目 | `<仓>/AGENTS.md` | 单个仓的约束 |
 
 四条路径都要能说出来。检查点「规则在哪」一节与实际不符 → **以实际文件为准**，顺手把检查点改对。
+
+先跑只读自检，省得靠眼睛找：
+
+```bash
+bash "<技能目录>/project-memory/scripts/check-rules.sh" "<工作区根>"
+```
 
 **发现第五个规则文件**（`RULES.md`、`CONVENTIONS.md`、`NOTES.md` 这类）→ 报 `[HANDOFF_GAP]`，先问用户归到哪一层，不要照着读。
 

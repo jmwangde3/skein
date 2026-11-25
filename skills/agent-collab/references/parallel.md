@@ -56,7 +56,7 @@ BEADS_ACTOR=agent-a bd -C "$STORE" update "<id-a>" --claim
 BEADS_ACTOR=agent-b bd -C "$STORE" update "<id-b>" --claim
 ```
 
-`AGENTS.local.md` 靠 `.git/info/exclude` 排除。**这个文件整个仓共用一份**，linked worktree 也读它，所以主仓加过一次就够，不用每个 worktree 再加一遍。上面的 `cp` 是把路由文件本身带进 worktree（技能要靠它读路径），`check-ignore` 是确认它不会被 `git add` 带进去。
+`AGENTS.local.md` 靠仓库根的 `.gitignore` 排除（写 `/AGENTS.local.md`）。`.gitignore` 随仓库走，linked worktree 共用主仓的索引与忽略规则，所以主仓加过一次就够，不用每个 worktree 再加一遍。上面的 `cp` 是把路由文件本身带进 worktree（技能要靠它读路径），`check-ignore` 是确认它不会被 `git add` 带进去。
 
 ## 2. 并行中
 

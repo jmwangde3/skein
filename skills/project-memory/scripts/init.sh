@@ -110,14 +110,13 @@ worktree_root: $(wp "$D")/worktrees
 
 | 层 | 文件 | 管什么 |
 |---|---|---|
-| a 全局 | 用户级 agent 规则 | 语言、编码、安全边界 |
-| b 工作区 | \`AGENTS.md\` | 这个工作区怎么干活 |
-| c 库 | 本文件 + \`<kb>/INDEX.md\` | 库路径、读写入口、本工作区例外 |
+| a 全局 | \`~/.workbuddy/agent-memory-snippet.md\`（主本）→ 各客户端 \`AGENTS.md\` | 语言、编码、安全边界 |
+| b 工作区 | \`AGENTS.md\` | 项目硬约束 |
+| c 库 | 本文件 | 库路径与本工作区例外 |
 | d 项目 | \`<仓>/AGENTS.md\` | 单个仓的约束 |
 
-新增规则先归到这四层，**不许新建规则文件**。写之前先 grep 一遍四层，有旧的合并或删掉，同一句话只留一处。
-
-技能正文不算一层：技能管「怎么做」（检索阶梯、检查点模板），这四层管「这个项目允许什么、禁止什么」。
+归层与合并规则见技能 \`project-memory\`「规则只有四层」。本文件只放路径和例外，接手与写回流程由技能定义。
+a 层改法：改 snippet，再跑 \`H:\AI工作区\agent-workspace-bridge\sync-agent-memory.ps1 -Update\`。
 EOF
   say "已写路由：$(wp "$LOCAL")"
 else
@@ -129,20 +128,19 @@ for k in store checkpoints kb worktree_root; do
 done
 grep -qE '^(scope|project):' "$LOCAL" || gap "$(wp "$LOCAL") 缺键：scope"
 
-## 4. 只在必要时写忽略
+## 4. 写忽略（.gitignore 随仓库走，换机也生效）
 if [ -e "$SCOPE/.git" ]; then
   if git -C "$SCOPE" ls-files --error-unmatch AGENTS.local.md >/dev/null 2>&1; then
     gap "AGENTS.local.md 已被 git 跟踪，忽略规则救不回来。先 git rm --cached AGENTS.local.md 再重跑"
   fi
-  EX="$(git -C "$SCOPE" rev-parse --path-format=absolute --git-path info/exclude 2>/dev/null \
-        || git -C "$SCOPE" rev-parse --git-path info/exclude)"
-  case "$EX" in
-    /*|[A-Za-z]:/*) ;;
-    *) EX="$SCOPE/$EX" ;;
-  esac
-  mkdir -p "$(dirname "$EX")"
-  grep -qxF '/AGENTS.local.md' "$EX" 2>/dev/null || echo '/AGENTS.local.md' >> "$EX"
-  say "已加入忽略：$(wp "$EX")"
+  GI="$SCOPE/.gitignore"
+  if grep -qxF '/AGENTS.local.md' "$GI" 2>/dev/null; then
+    say "已有忽略：$(wp "$GI")"
+  else
+    [ -s "$GI" ] && [ -n "$(tail -c1 "$GI")" ] && echo >> "$GI"
+    echo '/AGENTS.local.md' >> "$GI"
+    say "已写忽略：$(wp "$GI")（这个文件要提交）"
+  fi
 fi
 
 ## 5. 知识库

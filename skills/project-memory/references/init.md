@@ -50,7 +50,7 @@ done
 3. 建 `kb/{facts,decisions,runbooks,journal,proposals,archive}`
 4. 写归属标记 `.skein-scope`（内容是工作区绝对路径）
 5. 工作区根没有 `AGENTS.local.md` 才写；已有就沿用并只核对键
-6. 工作区根**本身是 git 仓**时，把 `AGENTS.local.md` 写进 `.git/info/exclude`
+6. 工作区根**本身是 git 仓**时，把 `/AGENTS.local.md` 写进 `.gitignore`（这个文件要提交，换机才继续生效；不要只写 `.git/info/exclude`，克隆不带走）
 7. `kb` 独立 `git init`，写首版 `INDEX.md` / `current.md`
 8. 生成工作区地图 `kb/facts/workspace-map.md`（顶层不足 3 项就跳过）
 9. 生成项目档案索引 `kb/facts/projects/INDEX.md`：工作区根自身（如果它就是一个 git 仓）加下面两层的每个 git 仓，一行一个，状态全标 `TODO`
