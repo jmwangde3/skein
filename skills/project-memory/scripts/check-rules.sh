@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# check-rules.sh — 只读检查一个工作区的四层规则
+# check-rules.sh — 只读检查三层规则与路径文件
 #
 #   bash check-rules.sh [工作区根]
 #
-# 查六件事：c 层键齐、b→c 指针与兜底、有没有第五个规则文件、
-# 忽略规则在不在 .gitignore、b 与 c 有没有重复长句、a 层是否同步。
+# 查七件事：路径文件键齐且没混进规则、b→路径指针与兜底、有没有第二个规则文件、
+# 忽略规则在不在 .gitignore、b 里有没有重复长句、a 层是否同步、kb 根有没有规则文件。
 # 不改任何文件。有 FAIL 时退出码 1。
 
 set -u
@@ -18,27 +18,32 @@ pass() { printf '  [PASS] %s\n' "$1"; }
 warn() { printf '  [WARN] %s\n' "$1"; WARN=$((WARN + 1)); }
 fail() { printf '  [FAIL] %s\n' "$1"; FAIL=$((FAIL + 1)); }
 
-echo "== 四层规则自检：$SCOPE"
+echo "== 规则自检（三层 + 路径文件）：$SCOPE"
 
-# ---- c 层：本机路由 ----
+# ---- 路径文件：AGENTS.local.md（不是规则层）----
 L="$SCOPE/AGENTS.local.md"
 KB=""
 if [ ! -f "$L" ]; then
-  fail "缺 c 层：AGENTS.local.md（先建库）"
+  fail "缺路径文件：AGENTS.local.md（先建库）"
 else
-  pass "c 层存在"
+  pass "路径文件存在"
   kv() { sed -n "s/^$1:[[:space:]]*//p" "$L" | head -n 1 | tr -d '\r'; }
   KB="$(kv kb)"
   if [ -z "$KB" ]; then
-    fail "c 层缺 kb 键"
+    fail "路径文件缺 kb 键"
   elif [ -d "$KB" ]; then
     pass "kb 路径有效"
   else
     fail "kb 路径不存在：$KB"
   fi
   for k in store checkpoints worktree_root; do
-    [ -n "$(kv "$k")" ] || warn "c 层缺键：$k"
+    [ -n "$(kv "$k")" ] || warn "路径文件缺键：$k"
   done
+  if grep -qE '^##+ (接手|写回|两层记忆|库的边界|禁止|规则)' "$L"; then
+    fail "AGENTS.local.md 里出现规则小节（接手/写回/禁止/规则…）——规则归 AGENTS.md，这里只放路径"
+  else
+    pass "路径文件没混进规则"
+  fi
 fi
 
 # ---- b 层：工作区规则 ----
@@ -47,16 +52,16 @@ if [ ! -f "$B" ]; then
   warn "无 b 层：AGENTS.md（允许，但项目约束就没有落点）"
 else
   pass "b 层存在"
-  grep -q "AGENTS.local.md" "$B" && pass "b 指向 c" || fail "b 没提 AGENTS.local.md"
+  grep -q "AGENTS.local.md" "$B" && pass "b 指向路径文件" || fail "b 没提 AGENTS.local.md"
   grep -q "HANDOFF_GAP" "$B" && pass "b 有缺失兜底" || fail "b 没写「AGENTS.local.md 缺失或没有 kb 键 → 报 HANDOFF_GAP」"
 fi
 
-# ---- 第五个规则文件 ----
+# ---- 第二个规则文件 ----
 for f in RULES.md CONVENTIONS.md NOTES.md GUIDELINES.md STYLE.md MEMORY.md; do
   [ -f "$SCOPE/$f" ] || continue
   size="$(wc -c < "$SCOPE/$f" | tr -d ' ')"
   if [ "$size" -gt 800 ] || ! grep -q "AGENTS.md" "$SCOPE/$f"; then
-    fail "疑似第五个规则文件：$f（${size}B）——规则并进 a/b/c/d，这个文件改成指针"
+    fail "疑似第二个规则文件：$f（${size}B）——规则并进 a/b/c，这个文件改成指针"
   else
     warn "指针文件：$f（${size}B）"
   fi
@@ -70,7 +75,7 @@ while IFS= read -r f; do
     AGENTS.md|AGENTS.local.md|CLAUDE.md|GEMINI.md|CODEBUDDY.md) continue ;;
   esac
   size="$(wc -c < "$f" | tr -d ' ')"
-  fail "疑似规则文件：$base（${size}B）——规则并进 a/b/c/d，原文进 <kb>/archive/"
+  fail "疑似规则文件：$base（${size}B）——规则并进 a/b/c，原文进 <kb>/archive/"
 done < <(find "$SCOPE" -maxdepth 1 -type f \( -iname "*rule*" -o -iname "*规则*" \) | sort)
 
 # kb 根也不该出现规则文件
@@ -79,7 +84,7 @@ if [ -n "$KB" ] && [ -d "$KB" ]; then
     [ -n "$f" ] || continue
     base="$(basename "$f")"
     case "$base" in README.md) continue ;; esac
-    fail "kb 根出现规则文件：$base——规则归 a/b/c/d，材料进 decisions/facts/runbooks"
+    fail "kb 根出现规则文件：$base——规则归 a/b/c，材料进 decisions/facts/runbooks"
   done < <(find "$KB" -maxdepth 1 -type f \( -iname "*rule*" -o -iname "*规则*" \) | sort)
 fi
 
@@ -109,15 +114,15 @@ if [ -d "$SCOPE/.git" ]; then
   fi
 fi
 
-# ---- b 与 c 的重复长句 ----
+# ---- b 与路径文件的重复长句 ----
 if [ -f "$B" ] && [ -f "$L" ]; then
   dups="$(comm -12 \
     <(awk 'length($0) >= 25 && $0 !~ /^[[:space:]]*[#>|-]/' "$B" | LC_ALL=C sort -u) \
     <(awk 'length($0) >= 25 && $0 !~ /^[[:space:]]*[#>|-]/' "$L" | LC_ALL=C sort -u))"
   if [ -n "$dups" ]; then
-    warn "b 与 c 有重复长句（应只留一处）：$(printf '%s\n' "$dups" | head -3 | cut -c1-40 | tr '\n' ';')"
+    warn "b 与路径文件有重复长句（应只留一处）：$(printf '%s\n' "$dups" | head -3 | cut -c1-40 | tr '\n' ';')"
   else
-    pass "b 与 c 无重复长句"
+    pass "b 与路径文件无重复长句"
   fi
 fi
 

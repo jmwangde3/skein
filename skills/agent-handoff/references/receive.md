@@ -9,16 +9,15 @@
 
 ### 0.0 先认规则在哪
 
-接手第一件事不是读任务，是确认这个工作区的规则都在哪。只有四层，缺哪层记「无」，不要补造：
+接手第一件事不是读任务，是确认这个工作区的规则都在哪。只有三层，缺哪层记「无」，不要补造：
 
 | 层 | 文件 | 管什么 |
 |---|---|---|
 | a 全局 | `~/.workbuddy/agent-memory-snippet.md`（主本）→ 各客户端 `AGENTS.md` | 语言、编码、安全边界 |
-| b 工作区 | `AGENTS.md` | 项目硬约束 |
-| c 库 | `AGENTS.local.md` | 库路径与本工作区例外 |
-| d 项目 | `<仓>/AGENTS.md` | 单个仓的约束 |
+| b 工作区 | `AGENTS.md` | 项目硬约束与本工作区例外 |
+| c 项目 | `<仓>/AGENTS.md` | 单个仓的约束 |
 
-四条路径都要能说出来。检查点「规则在哪」一节与实际不符 → **以实际文件为准**，顺手把检查点改对。
+三份规则都要能说出来。路径单独在 `AGENTS.local.md`，只放 kb / store / checkpoints，**不是规则层**；缺了报 `[HANDOFF_GAP]`。
 
 先跑只读自检，省得靠眼睛找：
 
@@ -26,7 +25,7 @@
 bash "<技能目录>/project-memory/scripts/check-rules.sh" "<工作区根>"
 ```
 
-**发现第五个规则文件**（`RULES.md`、`CONVENTIONS.md`、`NOTES.md` 这类）→ 报 `[HANDOFF_GAP]`，先问用户归到哪一层，不要照着读。
+**发现第二个规则文件**（`RULES.md`、`CONVENTIONS.md`、`NOTES.md` 这类）→ 报 `[HANDOFF_GAP]`，先问用户归到哪一层，不要照着读。
 
 ### 0.1 先找档案
 

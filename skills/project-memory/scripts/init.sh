@@ -106,17 +106,8 @@ kb: $(wp "$D")/kb
 backups: $(wp "$D")/backups
 worktree_root: $(wp "$D")/worktrees
 
-## 规则在哪
-
-| 层 | 文件 | 管什么 |
-|---|---|---|
-| a 全局 | \`~/.workbuddy/agent-memory-snippet.md\`（主本）→ 各客户端 \`AGENTS.md\` | 语言、编码、安全边界 |
-| b 工作区 | \`AGENTS.md\` | 项目硬约束 |
-| c 库 | 本文件 | 库路径与本工作区例外 |
-| d 项目 | \`<仓>/AGENTS.md\` | 单个仓的约束 |
-
-归层与合并规则见技能 \`project-memory\`「规则只有四层」。本文件只放路径和例外，接手与写回流程由技能定义。
-a 层改法：改 snippet，再跑 \`H:\AI工作区\agent-workspace-bridge\sync-agent-memory.ps1 -Update\`。
+# 只放路径，不写规则；规则在 AGENTS.md（a 全局 / b 工作区 / c 项目）。
+# a 层改法：改 ~/.workbuddy/agent-memory-snippet.md，再跑 agent-workspace-bridge/sync-agent-memory.ps1 -Update。
 EOF
   say "已写路由：$(wp "$LOCAL")"
 else
