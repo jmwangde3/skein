@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Skein v2.0.4 自动化冒烟测试（覆盖接手包完整性、老库收编、ai-memory 正常/失败显错与 BOM 校验）
+# Skein v2.0.5 自动化冒烟测试（覆盖接手包完整性、老库收编、ai-memory 正常/失败显错与 BOM 校验）
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -174,5 +174,14 @@ if grep -rnE "H:\\\\AI工作区|sync-agent-memory\.ps1|--agent codex|60%–75%|6
   fail "检测到残留个人硬编码或过时规则"
 fi
 ok "无个人硬编码路径与过时规则残留"
+
+# 13. 技能 references 引用完整性校验（防止悬空引用）
+for sk in "$ROOT"/skills/*/SKILL.md; do
+  dir="$(dirname "$sk")"
+  for ref in $(grep -oE 'references/[A-Za-z0-9_.-]+\.md' "$sk" 2>/dev/null | sort -u); do
+    [ -f "$dir/$ref" ] || fail "悬空引用：$sk -> $ref 不存在"
+  done
+done
+ok "全部 Skill 的 references 引用均真实存在"
 
 printf '\n全部 %d 项冒烟测试通过！\n' "$PASS"

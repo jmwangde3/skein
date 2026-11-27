@@ -6,7 +6,7 @@
 set -euo pipefail
 shopt -s nullglob
 
-VERSION="2.0.4"
+VERSION="2.0.5"
 
 die() { printf '[SKEIN_ERR] %s\n' "$*" >&2; exit 2; }
 gap() { printf '[HANDOFF_GAP] %s\n' "$*" >&2; exit 1; }
@@ -262,7 +262,7 @@ EOF
 
 - 首次实质修改文件或启动长耗时操作前，运行 `skein-cli mark --goal "<目标>" --next "<下一步>"` 留最小锚点。
 - 目标/约束变更、做出关键决策或排除某方案时，运行 `skein-cli note --type <decision|constraint|excluded|hypothesis|next> "<一句话>"`。
-- 换助手或新会话接手时，只需运行 `skein-cli resume`；单未完任务直接恢复，多任务先问用户。
+- 换助手、新会话或用户说「接手」时，运行 `skein-cli resume`（单未完任务直接恢复，多任务先问用户）；同会话说「继续」不触发接手。
 - 路径统一从 `AGENTS.local.md` 读取；缺键停手报 `[HANDOFF_GAP]`。
 <!-- /skein-rules -->
 EOF
@@ -865,7 +865,7 @@ case "$SUB" in
   -v|--version) say "skein-cli $VERSION" ;;
   -h|--help|help)
     cat <<'EOF'
-skein-cli v2.0.4 — Skein 机械操作单命令封装层
+skein-cli v2.0.5 — Skein 机械操作单命令封装层
 
 子命令：
   init       初始化工作区、路由、离线知识库与档案索引（--trae 生成 TRAE 规则；--adopt-existing 收编老库）

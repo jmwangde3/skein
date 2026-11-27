@@ -1,5 +1,5 @@
 ﻿<#
-Skein v2.0.2 技能安装脚本（Windows PowerShell 5.1 / 7，UTF-8 带 BOM）
+Skein v2.0.5 技能安装脚本（Windows PowerShell 5.1 / 7，UTF-8 带 BOM）
 - 默认安装 skein-cli 与纯 ASCII CRLF 的 skein-cli.cmd shim
 - -Client all 仅安装到本机已存在配置目录的客户端，不创建未安装客户端目录
 - 若用 skills-manager 管理技能，建议直接加 -CliOnly 只装 CLI

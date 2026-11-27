@@ -29,4 +29,4 @@ description: 大型复杂项目按需检索知识库、回读历史决策原文�
 - **并发期单写者**：双 Agent 协作时仅指定写者直写 `<kb>`，另一方只写 `<kb>/proposals/<日期>-<子项目>-<主题>.md`（附证据），由写者核实后合并提交。
 - 每次写回必须 `git -C "$KB" add -- <限定文件> && git -C "$KB" commit --only -m "kb: <摘要>"`，且确认 `git -C "$KB" remote` 为空（纯离线）。
 
-检索命令细节与索引整理阈值见 `references/search.md` 与 `references/curate.md`。
+检索命令细节与索引整理阈值见 `references/search.md`。

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Skein v2.0.2 安装脚本（macOS / Linux / Windows Git Bash）
+# Skein v2.0.5 安装脚本（macOS / Linux / Windows Git Bash）
 # 1. 安装 bin/skein-cli 到 ~/.local/bin/skein-cli
 # 2. --client all 时仅安装到本机已存在配置目录的客户端，不污染未安装客户端目录
 # 3. 支持 --cli-only（使用 skills-manager 管技能时只装 CLI）
@@ -18,7 +18,7 @@ ON_DEMAND_SKILLS="skein-init kb-retrieval agent-collab"
 
 usage() {
   cat <<'EOF'
-Skein v2.0.2 安装脚本（装技能 + skein-cli，不自动建库）
+Skein v2.0.5 安装脚本（装技能 + skein-cli，不自动建库）
 
   --client <名字>   all（默认，仅装本机已存在的客户端）/ claude / codex / workbuddy / antigravity / qoder-cn / custom
   --dir <路径>      --client custom 时装到这个目录

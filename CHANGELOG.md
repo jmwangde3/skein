@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.0.5 (2026-11-28 · 隔离「接手」与「继续」触发词 + 修复悬空引用)
+
+- **词面隔离接手触发词**：将 `agent-handoff` 触发词从「继续」改为「接手」，彻底避免同会话断流/暂停后说「继续」误触发 `skein-cli resume`（同步更新 `SKILL.md`、`bin/skein-cli`、`docs/requirements.md`、`docs/design.md`、`README.md`）。
+- **修复悬空文件引用**：移除 `skills/kb-retrieval/SKILL.md` 中对不存在的 `references/curate.md` 的引用（整理阈值已在 `references/search.md` 内），并在 `tests/smoke-test.sh` 新增第 13 项引用完整性自动校验。
+
 ## v2.0.4 (2026-11-28 · 修复 v2.0.3 验收新增问题 4 & 5)
 
 - **修复问题 4（新项目 `ai-memory recent` 404 误报 FAIL）**：`skein-cli check`（含 `--strict`）与 `resume` 识别 `404 Not Found` / `not found in workspace`，将其作为新项目正常 `[INFO]` 放行；仅对真正服务故障报 `[FAIL]` / `[WARN_EXTERNAL_CAPTURE]`，且精准提取真实 `Error:` 行而非 `INFO starting` 横幅。
