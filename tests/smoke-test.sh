@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Skein v2 自动化冒烟测试（验证 skein-cli 全链路与核心边界）
+# Skein v2.0.1 自动化冒烟测试（验证 skein-cli 全链路、E5 活跃写入探测与 TRAE 规则）
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -13,7 +13,6 @@ PASS=0
 ok() { PASS=$((PASS + 1)); printf '[PASS %02d] %s\n' "$PASS" "$1"; }
 fail() { printf '[FAIL] %s\n' "$1" >&2; exit 1; }
 
-# 准备测试工作区（含中文路径 + 1 个 Git 子仓）
 WS="$TMP/测试工作区"
 DATA="$TMP/skein-data"
 mkdir -p "$WS/sub-alpha" "$WS/sub-beta" "$WS/docs-only"
@@ -22,14 +21,15 @@ git -C "$WS/sub-alpha" -c user.name=t -c user.email=t@local commit --allow-empty
 git -C "$WS/sub-beta" init -q
 git -C "$WS/sub-beta" -c user.name=t -c user.email=t@local commit --allow-empty -q -m "init beta"
 
-# 1. init 建库
-out="$("$CLI" init --workspace "$WS" --data "$DATA")"
+# 1. init 建库（带 --trae）
+"$CLI" init --workspace "$WS" --data "$DATA" --trae >/dev/null
 [ -f "$WS/AGENTS.local.md" ] || fail "未生成 AGENTS.local.md"
+[ -f "$WS/.trae/rules/project_rules.md" ] || fail "未生成 TRAE 规则"
 [ -f "$DATA/测试工作区/kb/facts/projects/INDEX.md" ] || fail "未生成项目档案索引"
 [ -f "$DATA/测试工作区/kb/facts/workspace-map.md" ] || fail "未生成工作区地图"
-ok "中文路径建库、路由、地图与索引生成成功"
+ok "中文路径建库、路由、地图、索引与 TRAE 规则生成成功"
 
-# 2. 归属冲突拦截（同名不同路径）
+# 2. 归属冲突拦截
 WS2="$TMP/other/测试工作区"
 mkdir -p "$WS2"
 if "$CLI" init --workspace "$WS2" --data "$DATA" >/dev/null 2>&1; then
@@ -62,11 +62,18 @@ res3="$(cd "$WS/sub-alpha" && "$CLI" resume)"
 echo "$res3" | grep -q "TASK_ANCHOR: SINGLE (t-001)" || fail "关闭任务后未回归单任务"
 ok "任务归档与状态回归通过"
 
-# 7. 并行 worktree 创建与安全清理
+# 7. E5 修复验证：最近 10 秒工作树活跃写入探测
+echo "bg-write" > "$WS/sub-alpha/bg_test.log"
+res_bg="$(cd "$WS/sub-alpha" && "$CLI" resume)"
+echo "$res_bg" | grep -q "\[WARN_BG_ACTIVE\]" || fail "近期活跃写入未被 resume 检出"
+echo "$res_bg" | grep -q "RECENT_WRITE" || fail "RECENT_WRITE 标记缺失"
+rm -f "$WS/sub-alpha/bg_test.log"
+ok "E5 工作树近期活跃写入兜底探测通过"
+
+# 8. 并行 worktree 隔离与脏树防误删
 wt_out="$(cd "$WS/sub-alpha" && "$CLI" wt-add "mod-a")"
 wt_dir="$(printf '%s\n' "$wt_out" | sed -n 's/^WT_READY dir=\([^ ]*\).*/\1/p')"
 [ -d "$wt_dir" ] && [ -f "$wt_dir/AGENTS.local.md" ] || fail "worktree 创建或路由复制失败"
-# 故意弄脏 worktree，验证 wt-clean 拒绝强删
 echo "dirty" > "$wt_dir/uncommitted.txt"
 if (cd "$WS/sub-alpha" && "$CLI" wt-clean "mod-a" >/dev/null 2>&1); then
   fail "脏 worktree 被误删"
@@ -76,7 +83,7 @@ rm -f "$wt_dir/uncommitted.txt"
 [ ! -d "$wt_dir" ] || fail "干净 worktree 未清理"
 ok "并行 worktree 隔离、脏树防误删与安全清理通过"
 
-# 8. 硬编码扫描
+# 9. 硬编码扫描
 if grep -rnE "H:\\\\AI工作区|sync-agent-memory\.ps1|--agent codex|60%–75%|60%-75%" "$ROOT/bin" "$ROOT/skills" "$ROOT/templates" 2>/dev/null; then
   fail "检测到残留个人硬编码或过时规则"
 fi

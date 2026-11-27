@@ -1,15 +1,16 @@
 # Changelog
 
+## v2.0.1 (2026-11-27 · 基于 Windows 本地实测与复测修复)
+
+- **修复 E5 后台写入检测（Windows Git Bash 漏检）**：`bin/skein-cli` 的 `check_bg_writers` 升级为三层探测（`.git/index.lock` + 进程命令行 + 工作树 10 秒内文件 mtime 活跃写入兜底），跨平台覆盖无路径参数的后台重定向写入。
+- **新增 TRAE CN 适配**：`skein-cli init --trae` 自动生成 `.trae/rules/project_rules.md`；`install/install.ps1` 自动生成纯 ASCII + CRLF 的 `~/.local/bin/skein-cli.cmd` shim，彻底解决 Windows `cmd.exe` 按 GBK 解析 UTF-8 路径乱码问题。
+- **新增 QoderCN 适配**：`install/install.ps1` 增加 `qoder-cn`（`~/.qoder-cn/skills`）目标；实测确认 QoderCN 的 `ai-memory` hook 合并至 `~/.qoder-cn/settings.json` 即可正常捕获。
+- **Codex Hook 排障结论定型**：Native Windows 下 Codex 无需转 WSL2，首次安装或修改 `~/.codex/hooks.json` 后进入交互式 `codex` 执行一次 `/hooks` 信任 8 条 hook 即可正常捕获。
+
 ## v2.0.0 (2026-11-27)
 
-### 架构升级
-- **工具代劳原则落地**：新增 `bin/skein-cli` 单命令封装层，取代原来让 Agent 手动拼装多步 bash 核对与 10 节长检查点的低效流程。
-- **4 Skill 拆分为 5 Skill**：将原 `project-memory` 拆分为一次性建库技能 `skein-init` 与大知识库专用技能 `kb-retrieval`，小项目不再承担大知识库上下文成本。
-- **零准备接手与 6 项可验收标准**：`agent-handoff` 改为项目级常驻可发现（未触发仅占约 50 tokens 元数据），支持 A 零准备 + 用户在 B 说一句“继续”直接恢复唯一未完任务，并内置后台写入进程冲突检测与 6 项可验收恢复清单。
-- **双模式协作**：`agent-collab` 新增“同任务实时配合（单写者 + 只读观察者）”模式，与“独立子任务并行（worktree）”及“后台命令残留冲突”严格区分。
-- **外部工具栈轻量化**：解除对已迁移到 Dolt 的重型 `gastownhall/beads` 强依赖，改用单二进制 `kanban-md`（并行期按需）+ `ai-memory`（静默 Hook 捕获，默认 0 LLM，含 Hook+`cass` 降级口）。
-
-### 缺陷修复
-- 清除原 `project-memory/SKILL.md`、`init.sh`、`check-rules.sh` 中硬编码的个人本机路径（`H:\AI工作区\...`、`~/.workbuddy/agent-memory-snippet.md`）。
-- 修正 `templates/global-rules.md` 中已过时且与 `design.md` 冲突的 `60%–75%` 上下文触发文案。
-- 移除 `agent-collab` 中写死的 `--agent codex` 自动卸载命令，统一改为人工通过 `skills-manager` 开关、Agent 仅提醒。
+- 新增 `bin/skein-cli` 单命令外部封装层，落实工具代劳原则。
+- 原 4 Skill 拆分为 5 个严格解耦的极薄 Skill（`skein-init`、`task-checkpoint`、`agent-handoff`、`kb-retrieval`、`agent-collab`）。
+- `agent-handoff` 改为项目级常驻可发现，支持 A 零准备 + 用户在 B 说一句“继续”直恢，内置 6 项可验收清单。
+- `agent-collab` 补齐“模式 A：独立并行 worktree”与“模式 B：同任务单写者 + 只读观察者”。
+- 解除 Dolt 版 Beads 强依赖，改用单二进制 `kanban-md` + `ai-memory`（含 `cass` 兜底口）；清除全部个人硬编码路径与过时规则。
