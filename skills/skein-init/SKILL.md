@@ -1,23 +1,29 @@
 ---
 name: skein-init
-description: 给新工作区建库、初始化 Git 与目录骨架、为纳入范围的活跃子项目写最小档案。仅建库或新增子项目时通过 skills-manager 挂载，建完即卸载。触发：建库、初始化工作区、新项目接入、建档。
+description: 给新工作区建库、就地收编 v1 老库、为纳入范围的活跃子项目写最小档案。仅建库、老库补档或新增子项目时通过 skills-manager 挂载，建完即卸载。触发：建库、初始化工作区、老库迁移、补档、新项目接入。
 ---
 
 # skein-init
 
 ## 只做这一件事
 
-完成工作区建库，并为**用户确认纳入范围的活跃子项目**各写一份 ≤2 KB 的最小项目档案。**建完立刻提醒用户通过 `skills-manager` 卸载本技能。**
+完成工作区建库（或老库收编），并为**用户确认纳入范围的活跃子项目**各写一份 ≤2 KB 的最小项目档案。**建完立刻提醒用户通过 `skills-manager` 卸载本技能。**
 
 **不做**：日常进度记录（`task-checkpoint`）、接手恢复（`agent-handoff`）、大知识库检索（`kb-retrieval`）、并行协作（`agent-collab`）。
 
 ## 三步流程
 
-1. **跑单命令建骨架**：
-   ```bash
-   skein-cli init --workspace "<工作区根>" --data "<数据家，默认 ~/skein-data>"
-   ```
-   若为纯文档/调研工作区且尚无任何 Git 仓，加 `--git-init` 统一纳入 Git 管理。
+1. **跑单命令建骨架（或收编老库）**：
+   - 新工作区：
+     ```bash
+     skein-cli init --workspace "<工作区根>" --data "<数据家，默认 ~/skein-data>"
+     ```
+     纯文档非 Git 目录加 `--git-init`；需要 TRAE CN 规则加 `--trae`。
+   - **v1 老库就地迁移/补档**（已有非空数据目录且缺 `.skein-scope` 或 `facts/projects/`）：
+     ```bash
+     skein-cli init --workspace "<工作区根>" --data "<数据家>" --adopt-existing
+     ```
+     保留全部旧知识库与检查点，只补齐 `.skein-scope` 与 `facts/projects/INDEX.md`。
 2. **确认活跃子项目范围**：
    读 `<kb>/facts/projects/INDEX.md`。
    - 仅 1 个仓 → 直接建档。
@@ -32,6 +38,6 @@ description: 给新工作区建库、初始化 Git 与目录骨架、为纳入�
 
 ## 完成标志
 
-- `skein-cli check` 全绿
+- 在目标子仓内运行 `skein-cli check --strict` 全绿（含 `.skein-scope`、最小档案 `READY` 与 `ai-memory recent` 连通性）
 - 所有纳入范围的子项目在 `INDEX.md` 中均为 `READY`（或带明确缺口的 `PARTIAL`）且已提交进 `<kb>`
 - 回复末尾提醒用户：**通过 `skills-manager` 卸载 `skein-init`**

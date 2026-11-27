@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # skein-cli — Skein v2 外部单命令封装层
-# 把多步机械核对、建库、写前留痕、接手汇总与 worktree 管理压成单条命令，
+# 把多步机械核对、建库、老库迁移、写前留痕、接手汇总与 worktree 管理压成单条命令，
 # 最大限度减少 Agent 的工具调用轮次与 token 消耗。
 
 set -euo pipefail
 shopt -s nullglob
 
-VERSION="2.0.2"
+VERSION="2.0.3"
 
 die() { printf '[SKEIN_ERR] %s\n' "$*" >&2; exit 2; }
 gap() { printf '[HANDOFF_GAP] %s\n' "$*" >&2; exit 1; }
@@ -127,8 +127,7 @@ check_bg_writers() {
     hits="${hits}${hits:+$'\n'}${proc_hits}"
   fi
 
-  local recent=""
-  local pybin=""
+  local recent="" pybin=""
   if command -v python3 >/dev/null 2>&1; then
     pybin="python3"
   elif command -v python >/dev/null 2>&1; then
@@ -166,20 +165,22 @@ PY
 }
 
 cmd_init() {
-  local workspace="" data_home="${SKEIN_DATA_HOME:-}" init_git=0 with_trae=0
+  local workspace="" data_home="${SKEIN_DATA_HOME:-}" init_git=0 with_trae=0 adopt_existing=0
   while [ $# -gt 0 ]; do
     case "$1" in
-      --workspace) [ $# -ge 2 ] || die "缺 --workspace"; workspace="$2"; shift 2 ;;
-      --data)      [ $# -ge 2 ] || die "缺 --data"; data_home="$2"; shift 2 ;;
-      --git-init)  init_git=1; shift ;;
-      --trae)      with_trae=1; shift ;;
+      --workspace)      [ $# -ge 2 ] || die "缺 --workspace"; workspace="$2"; shift 2 ;;
+      --data)           [ $# -ge 2 ] || die "缺 --data"; data_home="$2"; shift 2 ;;
+      --git-init)       init_git=1; shift ;;
+      --trae)           with_trae=1; shift ;;
+      --adopt-existing) adopt_existing=1; shift ;;
       -h|--help)
         cat <<'EOF'
-用法：skein-cli init [--workspace <目录>] [--data <数据家>] [--git-init] [--trae]
-  --workspace  工作区根目录（默认当前目录）
-  --data       私有数据目录根（默认 ~/skein-data 或 $SKEIN_DATA_HOME）
-  --git-init   若工作区根尚非 Git 仓且内部无子仓，则自动执行 git init
-  --trae       额外生成 TRAE CN 项目规则 .trae/rules/project_rules.md
+用法：skein-cli init [--workspace <目录>] [--data <数据家>] [--git-init] [--trae] [--adopt-existing]
+  --workspace       工作区根目录（默认当前目录）
+  --data            私有数据目录根（默认 ~/skein-data 或 $SKEIN_DATA_HOME）
+  --git-init        若工作区根尚非 Git 仓且内部无子仓，则自动执行 git init
+  --trae            额外生成 TRAE CN 项目规则 .trae/rules/project_rules.md
+  --adopt-existing  就地收编已有的 v1 老数据目录（补 .skein-scope 与缺失的 v2 目录/档案索引，保留全部旧数据）
 EOF
         exit 0 ;;
       *) die "未知参数：$1" ;;
@@ -219,7 +220,11 @@ EOF
       gap "$(wp "$d") 归属于 $owner，而非 $(wp "$scope")。请换用 --data"
     fi
   elif [ -d "$d" ] && [ -n "$(find "$d" -mindepth 1 -print -quit 2>/dev/null)" ]; then
-    gap "$(wp "$d") 非空但缺少 .skein-scope 归属标记，请人工确认"
+    if [ "$adopt_existing" -eq 1 ]; then
+      say "按 --adopt-existing 收编已有数据目录：$(wp "$d")（保留全部旧数据）"
+    else
+      gap "$(wp "$d") 非空但缺少 .skein-scope 归属标记；若确认是本工作区老库请加 --adopt-existing"
+    fi
   fi
 
   mkdir -p "$d/checkpoints/done" "$d/worktrees" "$d/board" "$d/backups"
@@ -381,7 +386,7 @@ EOF
   say "路由：$(wp "$local_file")"
   say "数据：$(wp "$d")"
   say "外部工具：ai-memory=$has_aimem | kanban-md=$has_kanban | qmd=$has_qmd"
-  say "下一步：为确认纳入范围的活跃子仓写最小档案（≤2KB），建完即卸载 skein-init。"
+  say "下一步：为确认纳入范围的活跃子仓写最小档案（≤2KB），然后跑 skein-cli check --strict 验收，建完即卸载 skein-init。"
 }
 
 cmd_map() {
@@ -625,7 +630,7 @@ cmd_resume() {
     say "--- PROJECT_BRIEF ($(wp "$brief")) ---"
     cat "$brief"
   else
-    say "--- PROJECT_BRIEF: MISSING (当前子仓尚未建最小档案) ---"
+    say "--- PROJECT_BRIEF: MISSING (当前子仓尚未建最小档案；老库请跑 skein-cli init --adopt-existing 后补档) ---"
   fi
 
   say ""
@@ -675,10 +680,20 @@ cmd_resume() {
     done
   fi
 
+  # 外部自动留痕读取：调用经过核验的 `ai-memory recent`（在项目 cwd 下执行，绝不静默吞错）
   say ""
   if command -v ai-memory >/dev/null 2>&1; then
-    say "--- EXTERNAL_CAPTURE: ai-memory (detected) ---"
-    ai-memory status --project "${REPO:-$PWD}" 2>/dev/null | head -n 40 || say "(ai-memory 未返回该项目摘要，可按需运行 ai-memory search)"
+    say "--- EXTERNAL_CAPTURE: ai-memory (recent) ---"
+    local aim_out="" aim_rc=0
+    aim_out="$(cd "${REPO:-$PWD}" && ai-memory recent 2>&1)" || aim_rc=$?
+    if [ "$aim_rc" -eq 0 ] && [ -n "$aim_out" ]; then
+      printf '%s\n' "$aim_out" | head -n 30
+    elif [ "$aim_rc" -eq 0 ]; then
+      say "(ai-memory 正常响应，当前项目暂无近期捕获页)"
+    else
+      say "[WARN_EXTERNAL_CAPTURE] ai-memory recent 执行失败（exit $aim_rc）："
+      printf '%s\n' "$aim_out" | head -n 5
+    fi
   elif command -v cass >/dev/null 2>&1; then
     say "--- EXTERNAL_CAPTURE: cass (fallback detected) ---"
     say "如需回看中断前未落盘的最后几轮探索，可按需运行 cass 搜索当前目录近期会话。"
@@ -735,28 +750,79 @@ cmd_wt_clean() {
 }
 
 cmd_check() {
+  local strict=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --strict) strict=1; shift ;;
+      *) shift ;;
+    esac
+  done
+
   load_route
+  current_repo_info
   say "=== Skein v2 体检 ==="
   say "scope: $(wp "$SCOPE")"
-  local fail=0
+  say "repo:  ${REPO_REL:-.} ($REPO_NAME)"
+
+  local fail=0 warn=0
   for k in scope data_dir checkpoints kb board worktree_root; do
     if kv "$LOCAL" "$k" >/dev/null 2>&1; then
-      say "  [OK] 路由键 $k"
+      say "  [OK]   路由键 $k"
     else
       say "  [FAIL] 缺少路由键 $k"; fail=1
     fi
   done
+
+  if [ -n "$DATA_DIR" ] && [ -f "$DATA_DIR/.skein-scope" ]; then
+    say "  [OK]   数据目录归属标记 .skein-scope 存在"
+  else
+    say "  [WARN] 缺少 .skein-scope（老库请跑 skein-cli init --adopt-existing）"; warn=1
+  fi
+
   if [ -e "$SCOPE/.git" ]; then
     if git -C "$SCOPE" check-ignore -q AGENTS.local.md 2>/dev/null; then
-      say "  [OK] AGENTS.local.md 已加入 Git 忽略"
+      say "  [OK]   AGENTS.local.md 已加入 Git 忽略"
     else
       say "  [FAIL] AGENTS.local.md 未被 Git 忽略"; fail=1
     fi
   fi
+
   if [ -z "$(git -C "$KB" remote 2>/dev/null || true)" ]; then
-    say "  [OK] 知识库无远程配置（纯本地离线）"
+    say "  [OK]   知识库无远程配置（纯本地离线）"
   else
     say "  [FAIL] 知识库存在远程仓库"; fail=1
+  fi
+
+  # 校验当前子项目最小档案（避免 check 全绿但 resume 缺 PROJECT_BRIEF）
+  local brief="$KB/facts/projects/${REPO_NAME}.md"
+  if [ -f "$brief" ]; then
+    local bst
+    bst="$(sed -n 's/^- 状态：[[:space:]]*//p' "$brief" | head -n 1 | tr -d '\r')"
+    if [ "$bst" = "READY" ]; then
+      say "  [OK]   当前子项目最小档案就绪（$(wp "$brief")）"
+    else
+      say "  [WARN] 当前子项目最小档案状态为 ${bst:-未知}（非 READY）：$(wp "$brief")"; warn=1
+    fi
+  else
+    say "  [WARN] 当前子项目缺少最小档案（$(wp "$brief")），resume 将报 PROJECT_BRIEF: MISSING"; warn=1
+  fi
+
+  # 校验外部捕获工具（ai-memory）实际可执行性
+  if command -v ai-memory >/dev/null 2>&1; then
+    local aim_out="" aim_rc=0
+    aim_out="$(cd "${REPO:-$PWD}" && ai-memory recent 2>&1)" || aim_rc=$?
+    if [ "$aim_rc" -eq 0 ]; then
+      say "  [OK]   外部捕获 ai-memory recent 正常响应"
+    else
+      say "  [FAIL] 外部捕获 ai-memory recent 异常（exit $aim_rc）：$(printf '%s' "$aim_out" | head -n 1)"; fail=1
+    fi
+  else
+    say "  [INFO] 未检测到 ai-memory（仅使用任务锚点 + Git 现场）"
+  fi
+
+  if [ "$strict" -eq 1 ] && [ "$warn" -ne 0 ]; then
+    say "严格模式（--strict）未通过：请先消除上述 [WARN] 项。"
+    exit 1
   fi
   exit "$fail"
 }
@@ -776,18 +842,18 @@ case "$SUB" in
   -v|--version) say "skein-cli $VERSION" ;;
   -h|--help|help)
     cat <<'EOF'
-skein-cli v2.0.2 — Skein 机械操作单命令封装层
+skein-cli v2.0.3 — Skein 机械操作单命令封装层
 
 子命令：
-  init       初始化工作区、路由、离线知识库与档案索引（加 --trae 生成 TRAE 规则）
+  init       初始化工作区、路由、离线知识库与档案索引（--trae 生成 TRAE 规则；--adopt-existing 收编老库）
   map        刷新工作区顶层机械地图
   mark       写前最小留痕（创建/更新任务锚点）
   note       追加 1 行语义锚点（goal/constraint/decision/excluded/hypothesis/next）
   close      关闭并归档已完成任务
-  resume     一键输出接手上下文包（档案+Git现场+锚点+三层后台写入探测+外部留痕）
+  resume     一键输出接手上下文包（档案+Git现场+锚点+后台写入探测+ai-memory recent）
   wt-add     为并行子任务建独立 worktree 并复制路由
   wt-clean   合并后安全清理 worktree（拒绝强制覆盖脏树）
-  check      只读体检路由、忽略规则与离线约束
+  check      体检路由、归属标记、最小档案与 ai-memory 连通性（--strict 将 WARN 视为失败）
 EOF
     ;;
   *) die "未知子命令：$SUB（运行 skein-cli --help 查看用法）" ;;
