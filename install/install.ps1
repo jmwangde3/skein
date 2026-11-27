@@ -1,7 +1,8 @@
 ﻿<#
-Skein v2.0.1 技能安装脚本（Windows PowerShell 5.1 / 7）
-默认只装全局常驻技能 task-checkpoint、skein-cli 与纯 ASCII CRLF 的 skein-cli.cmd shim；
-项目级默认只装 agent-handoff。其余低频技能建议用 skills-manager 按需开关。
+Skein v2.0.2 技能安装脚本（Windows PowerShell 5.1 / 7，UTF-8 带 BOM）
+- 默认安装 skein-cli 与纯 ASCII CRLF 的 skein-cli.cmd shim
+- -Client all 仅安装到本机已存在配置目录的客户端，不创建未安装客户端目录
+- 若用 skills-manager 管理技能，建议直接加 -CliOnly 只装 CLI
 #>
 [CmdletBinding()]
 param(
@@ -10,6 +11,7 @@ param(
     [string]$Dir,
     [string]$Project,
     [switch]$AllSkills,
+    [switch]$CliOnly,
     [switch]$Force
 )
 
@@ -50,31 +52,49 @@ $shimContent = "@echo off`r`nsetlocal`r`nset `"GIT_BASH=%ProgramFiles%\Git\bin\b
 Write-Host "已装 CLI：$binDir\skein-cli 与 $shimPath"
 Write-Host "提示：把 $binDir 加入用户 PATH 即可在 TRAE / PowerShell 终端直接运行裸命令 skein-cli。"
 
+if ($CliOnly) {
+    Write-Host "已按 -CliOnly 跳过技能目录写入。"
+    return
+}
+
 Write-Host "== 安装全局常驻技能（$GlobalSkill）=="
-$map = @{
-    claude      = Join-Path $home_ '.claude\skills'
-    codex       = Join-Path $home_ '.codex\skills'
-    workbuddy   = Join-Path $home_ '.workbuddy\skills'
-    antigravity = Join-Path $home_ '.agents\skills'
-    'qoder-cn'  = Join-Path $home_ '.qoder-cn\skills'
+$clientRoots = [ordered]@{
+    claude      = Join-Path $home_ '.claude'
+    codex       = Join-Path $home_ '.codex'
+    workbuddy   = Join-Path $home_ '.workbuddy'
+    antigravity = Join-Path $home_ '.agents'
+    'qoder-cn'  = Join-Path $home_ '.qoder-cn'
 }
 if ($Client -eq 'all') {
-    foreach ($k in $map.Keys) { Install-One $map[$k] $GlobalSkill }
+    foreach ($k in $clientRoots.Keys) {
+        $base = $clientRoots[$k]
+        if (Test-Path -LiteralPath $base) {
+            Install-One (Join-Path $base 'skills') $GlobalSkill
+        } else {
+            Write-Host "  跳过（未检测到客户端目录）：$base"
+        }
+    }
 } elseif ($Client -eq 'custom') {
     if (-not $Dir) { throw '-Client custom 必须同时给 -Dir' }
     Install-One $Dir $GlobalSkill
 } else {
-    Install-One $map[$Client] $GlobalSkill
+    Install-One (Join-Path $clientRoots[$Client] 'skills') $GlobalSkill
 }
 
 if ($Project) {
     if (-not (Test-Path -LiteralPath $Project)) { throw "项目目录不存在：$Project" }
     $Proj = (Resolve-Path -LiteralPath $Project).Path
     Write-Host "== 安装项目级技能 =="
-    $pMap = @{ claude='.claude'; codex='.codex'; workbuddy='.workbuddy'; antigravity='.agents'; 'qoder-cn'='.qoder-cn' }
-    $targets = if ($Client -eq 'all') { $pMap.Values } elseif ($pMap.ContainsKey($Client)) { @($pMap[$Client]) } else { @() }
-    foreach ($c in $targets) {
-        $dest = Join-Path $Proj "$c\skills"
+    $pMap = [ordered]@{ claude='.claude'; codex='.codex'; workbuddy='.workbuddy'; antigravity='.agents'; 'qoder-cn'='.qoder-cn' }
+    if ($Client -eq 'all') {
+        foreach ($k in $pMap.Keys) {
+            if (Test-Path -LiteralPath $clientRoots[$k]) {
+                $dest = Join-Path $Proj "$($pMap[$k])\skills"
+                foreach ($s in $ProjectSkills) { Install-One $dest $s }
+            }
+        }
+    } elseif ($pMap.Contains($Client)) {
+        $dest = Join-Path $Proj "$($pMap[$Client])\skills"
         foreach ($s in $ProjectSkills) { Install-One $dest $s }
     }
 }

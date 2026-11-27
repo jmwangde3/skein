@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Skein v2.0.1 自动化冒烟测试（验证 skein-cli 全链路、E5 活跃写入探测与 TRAE 规则）
+# Skein v2.0.2 自动化冒烟测试（含 install.ps1 UTF-8 BOM 回归校验）
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -62,7 +62,7 @@ res3="$(cd "$WS/sub-alpha" && "$CLI" resume)"
 echo "$res3" | grep -q "TASK_ANCHOR: SINGLE (t-001)" || fail "关闭任务后未回归单任务"
 ok "任务归档与状态回归通过"
 
-# 7. E5 修复验证：最近 10 秒工作树活跃写入探测
+# 7. E5 活跃写入兜底探测
 echo "bg-write" > "$WS/sub-alpha/bg_test.log"
 res_bg="$(cd "$WS/sub-alpha" && "$CLI" resume)"
 echo "$res_bg" | grep -q "\[WARN_BG_ACTIVE\]" || fail "近期活跃写入未被 resume 检出"
@@ -83,7 +83,12 @@ rm -f "$wt_dir/uncommitted.txt"
 [ ! -d "$wt_dir" ] || fail "干净 worktree 未清理"
 ok "并行 worktree 隔离、脏树防误删与安全清理通过"
 
-# 9. 硬编码扫描
+# 9. install.ps1 UTF-8 BOM 回归校验（防止 PowerShell 5.1 中文乱码报错）
+bom="$(head -c 3 "$ROOT/install/install.ps1" | od -An -tx1 | tr -d ' \n')"
+[ "$bom" = "efbbbf" ] || fail "install/install.ps1 缺少 UTF-8 BOM（当前前 3 字节：$bom）"
+ok "install/install.ps1 为 UTF-8 带 BOM（兼容 PowerShell 5.1）"
+
+# 10. 硬编码扫描
 if grep -rnE "H:\\\\AI工作区|sync-agent-memory\.ps1|--agent codex|60%–75%|60%-75%" "$ROOT/bin" "$ROOT/skills" "$ROOT/templates" 2>/dev/null; then
   fail "检测到残留个人硬编码或过时规则"
 fi

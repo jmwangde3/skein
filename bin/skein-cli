@@ -6,7 +6,7 @@
 set -euo pipefail
 shopt -s nullglob
 
-VERSION="2.0.1"
+VERSION="2.0.2"
 
 die() { printf '[SKEIN_ERR] %s\n' "$*" >&2; exit 2; }
 gap() { printf '[HANDOFF_GAP] %s\n' "$*" >&2; exit 1; }
@@ -776,7 +776,7 @@ case "$SUB" in
   -v|--version) say "skein-cli $VERSION" ;;
   -h|--help|help)
     cat <<'EOF'
-skein-cli v2.0.1 — Skein 机械操作单命令封装层
+skein-cli v2.0.2 — Skein 机械操作单命令封装层
 
 子命令：
   init       初始化工作区、路由、离线知识库与档案索引（加 --trae 生成 TRAE 规则）
