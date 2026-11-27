@@ -1,6 +1,6 @@
 ---
 name: agent-handoff
-description: 要把任务交给另一个 Agent（handoff）、作为陌生或返场 Agent 接手（cold start / resume）、或交接中途出错需要恢复时加载。触发：交接、接手、换 Agent、冷启动、HANDOFF_GAP。
+description: 只在任务要交给**另一个** Agent、另一台机器或另一个人时加载。同一 Agent 新开会话、换天、压缩后恢复**不要**加载本技能，改用 `task-checkpoint`。触发：换 Agent、换机器、交给别人、作为陌生 Agent 接手（cold start）、交接中断恢复（HANDOFF_GAP）。
 ---
 
 # agent-handoff
@@ -17,7 +17,9 @@ description: 要把任务交给另一个 Agent（handoff）、作为陌生或返
 |---|---|
 | 同一个 agent 新开会话 / 换天 / 重启 | **检查点**，不写 handoff |
 | 换另一个 agent、换机器、换人 | handoff |
-| 用户说「写 handoff」但没说交给谁 | **检查点**，回复里报路径；点名了接手方或明确要文件才写 handoff |
+| 用户说「写 handoff」但没点名接手方 | **检查点**，回复里报路径；不加载本技能 |
+
+判据是本技能有没有被加载：加载了就是真交接，没加载就是同一 agent 续接。用户提到的「handoff」三个字不构成加载理由。
 
 handoff 只解决「接手的人看不到你的上下文」；同一 agent 的下一轮读检查点就够，写 handoff 是重复。
 
