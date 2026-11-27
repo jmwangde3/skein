@@ -1,0 +1,780 @@
+#!/usr/bin/env bash
+# skein-cli — Skein v2 外部单命令封装层
+# 把多步机械核对、建库、写前留痕、接手汇总与 worktree 管理压成单条命令，
+# 最大限度减少 Agent 的工具调用轮次与 token 消耗。
+#
+# 子命令：
+#   init       初始化工作区目录、路由、Git 知识库与机械地图
+#   map        刷新工作区顶层机械地图
+#   mark       写前最小留痕（创建或更新活跃任务锚点）
+#   note       追加 1 行语义锚点（目标/约束/决定/排除/假设/下一步）
+#   close      标记指定任务完成并归档
+#   resume     一键汇总接手现场（任务数/档案/ai-memory或日志/Git状态/后台进程）
+#   wt-add     为并行子任务创建独立 worktree 并复制路由
+#   wt-clean   合并后安全清理 worktree（拒绝 --force 跳过脏树）
+#   check      只读检查工作区路由、忽略规则与技能边界
+
+set -euo pipefail
+shopt -s nullglob
+
+VERSION="2.0.0"
+
+die() { printf '[SKEIN_ERR] %s\n' "$*" >&2; exit 2; }
+gap() { printf '[HANDOFF_GAP] %s\n' "$*" >&2; exit 1; }
+say() { printf '%s\n' "$*"; }
+
+wp() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -m "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
+
+hash8() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | cut -c1-8
+  else
+    shasum -a 256 | cut -c1-8
+  fi
+}
+
+now_iso() {
+  date '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null || date '+%Y-%m-%d %H:%M:%S'
+}
+
+# 从当前目录向上找第一个 AGENTS.local.md
+find_scope() {
+  local d p
+  d="$(pwd -P)"
+  while :; do
+    if [ -f "$d/AGENTS.local.md" ]; then
+      printf '%s' "$d"
+      return 0
+    fi
+    p="$(dirname "$d")"
+    [ "$p" = "$d" ] && return 1
+    d="$p"
+  done
+}
+
+kv() {
+  local file="$1" key="$2" line val
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    case "$line" in
+      "${key}:"*)
+        val="${line#${key}:}"
+        val="${val#"${val%%[![:space:]]*}"}"
+        val="${val%"${val##*[![:space:]]}"}"
+        printf '%s' "$val"
+        return 0
+        ;;
+    esac
+  done < "$file"
+  return 1
+}
+
+load_route() {
+  SCOPE="$(find_scope || true)"
+  [ -n "$SCOPE" ] || gap "未找到 AGENTS.local.md（应在工作区根）。请先挂载 skein-init 执行建库。"
+  LOCAL="$SCOPE/AGENTS.local.md"
+  DATA_DIR="$(kv "$LOCAL" data_dir || true)"
+  CKPT="$(kv "$LOCAL" checkpoints || true)"
+  KB="$(kv "$LOCAL" kb || true)"
+  WT_ROOT="$(kv "$LOCAL" worktree_root || true)"
+  BOARD="$(kv "$LOCAL" board || true)"
+  GLOBAL_KB="$(kv "$LOCAL" global_kb || true)"
+  [ -n "$CKPT" ] && [ -n "$KB" ] && [ -n "$WT_ROOT" ] || gap "$LOCAL 缺少必需键（checkpoints / kb / worktree_root）"
+}
+
+is_repo_root() {
+  local dir="$1" top
+  [ -e "$dir/.git" ] || return 1
+  top="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)"
+  [ -n "$top" ] || return 1
+  [ "$(cd "$top" && pwd -P)" = "$(cd "$dir" && pwd -P)" ]
+}
+
+skip_dir() {
+  case "$1" in
+    node_modules|.venv|venv|dist|build|target|.git|.worktrees) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+current_repo_info() {
+  REPO="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -z "$REPO" ]; then
+    REPO=""
+    REPO_REL=""
+    REPO_NAME="$(basename "$PWD")"
+    return 0
+  fi
+  REPO="$(cd "$REPO" && pwd -P)"
+  if [ "$REPO" = "$SCOPE" ]; then
+    REPO_REL="."
+    REPO_NAME="$(basename "$SCOPE")"
+  else
+    REPO_REL="${REPO#"$SCOPE"/}"
+    REPO_NAME="$(basename "$REPO")"
+  fi
+}
+
+# 检测是否有后台进程正在占用同一工作树（跨平台轻量探测）
+check_bg_writers() {
+  local target="$1" hits=""
+  if command -v pgrep >/dev/null 2>&1; then
+    hits="$(ps -eo pid,ppid,comm,args 2>/dev/null | grep -F "$target" | grep -Ev "skein-cli|grep|awk|sed" | head -n 5 || true)"
+  elif command -v ps >/dev/null 2>&1; then
+    hits="$(ps -ef 2>/dev/null | grep -F "$target" | grep -Ev "skein-cli|grep|awk|sed" | head -n 5 || true)"
+  fi
+  # 检查是否存在 git index.lock（高置信度写冲突信号）
+  if [ -f "$target/.git/index.lock" ]; then
+    hits="${hits}${hits:+$'\n'}GIT_INDEX_LOCK: $target/.git/index.lock 存在（Git 写入进行中或异常中断）"
+  fi
+  printf '%s' "$hits"
+}
+
+# ---------------- 子命令：init ----------------
+cmd_init() {
+  local workspace="" data_home="${SKEIN_DATA_HOME:-}" init_git=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --workspace) [ $# -ge 2 ] || die "缺 --workspace"; workspace="$2"; shift 2 ;;
+      --data)      [ $# -ge 2 ] || die "缺 --data"; data_home="$2"; shift 2 ;;
+      --git-init)  init_git=1; shift ;;
+      -h|--help)
+        cat <<'EOF'
+用法：skein-cli init [--workspace <目录>] [--data <数据家>] [--git-init]
+  --workspace  工作区根目录（默认当前目录）
+  --data       私有数据目录根（默认 ~/skein-data 或 $SKEIN_DATA_HOME）
+  --git-init   若工作区根尚非 Git 仓且内部无子仓，则自动执行 git init
+EOF
+        exit 0 ;;
+      *) die "未知参数：$1" ;;
+    esac
+  done
+
+  [ -n "$workspace" ] || workspace="$(pwd)"
+  [ -d "$workspace" ] || gap "目录不存在：$workspace"
+  local scope name
+  scope="$(cd "$workspace" && pwd -P)"
+  name="$(basename "$scope")"
+
+  # 1. 检查嵌套路由
+  local nested=""
+  while IFS= read -r -d '' f; do nested="${nested}${f}"$'\n'; done < <(
+    find "$scope" -mindepth 2 \
+      \( -name .git -o -name node_modules -o -name .venv -o -name venv -o -name dist -o -name build -o -name target \) -prune -o \
+      -name AGENTS.local.md -type f -print0 2>/dev/null || true
+  )
+  if [ -n "$nested" ]; then
+    printf '发现子目录存在 AGENTS.local.md（会遮蔽工作区路由）：\n%s' "$nested" >&2
+    gap "请先与用户确认子路由去留，本命令不自动删除"
+  fi
+
+  # 2. 数据家与归属校验
+  [ -n "$data_home" ] || data_home="$HOME/skein-data"
+  mkdir -p "$data_home" || gap "无法创建数据家：$data_home"
+  data_home="$(cd "$data_home" && pwd -P)"
+  if git -C "$data_home" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    gap "数据家 $(wp "$data_home") 位于 Git 工作树内，私有数据可能被提交"
+  fi
+
+  local d="$data_home/$name"
+  local marker="$d/.skein-scope"
+  if [ -f "$marker" ]; then
+    local owner
+    owner="$(head -n 1 "$marker" | tr -d '\r')"
+    if [ "$owner" != "$(wp "$scope")" ] && [ "$owner" != "$scope" ]; then
+      gap "$(wp "$d") 归属于 $owner，而非 $(wp "$scope")。请换用 --data"
+    fi
+  elif [ -d "$d" ] && [ -n "$(find "$d" -mindepth 1 -print -quit 2>/dev/null)" ]; then
+    gap "$(wp "$d") 非空但缺少 .skein-scope 归属标记，请人工确认"
+  fi
+
+  mkdir -p "$d/checkpoints/done" "$d/worktrees" "$d/board" "$d/backups"
+  mkdir -p "$d/kb/facts/projects" "$d/kb/decisions" "$d/kb/runbooks" "$d/kb/proposals" "$d/kb/archive"
+  [ -f "$marker" ] || printf '%s\n' "$(wp "$scope")" > "$marker"
+
+  # 3. 写入本机路由（无个人硬编码）
+  local local_file="$scope/AGENTS.local.md"
+  if [ ! -f "$local_file" ]; then
+    cat > "$local_file" <<EOF
+# Skein 本机路由 · $name
+
+> 本文件含本机绝对路径，永不提交进 Git。换目录时只改此处。
+
+scope: $(wp "$scope")
+data_dir: $(wp "$d")
+checkpoints: $(wp "$d")/checkpoints
+kb: $(wp "$d")/kb
+board: $(wp "$d")/board
+worktree_root: $(wp "$d")/worktrees
+# 可选：未来接入跨项目个人知识库时取消注释
+# global_kb: /path/to/personal-kb
+EOF
+    say "已生成路由：$(wp "$local_file")"
+  else
+    say "沿用已有路由：$(wp "$local_file")"
+  fi
+
+  # 4. 写入或更新工作区 b 层 AGENTS.md 的极简收尾块
+  local agents_md="$scope/AGENTS.md"
+  local block_tmp="$scope/.skein-rules.$$.tmp"
+  cat > "$block_tmp" <<'EOF'
+<!-- skein-rules -->
+## Skein v2 工作纪律
+
+- 首次实质修改文件或启动长耗时操作前，运行 `skein-cli mark --goal "<目标>" --next "<下一步>"` 留最小锚点。
+- 目标/约束变更、做出关键决策或排除某方案时，运行 `skein-cli note --type <decision|constraint|excluded|hypothesis|next> "<一句话>"`。
+- 换助手或新会话接手时，只需运行 `skein-cli resume`；单未完任务直接恢复，多任务先问用户。
+- 路径统一从 `AGENTS.local.md` 读取；缺键停手报 `[HANDOFF_GAP]`。
+<!-- /skein-rules -->
+EOF
+  if [ ! -f "$agents_md" ]; then
+    printf '# 工作区规则 — %s\n\n' "$name" > "$agents_md"
+  fi
+  if grep -q '<!-- skein-rules -->' "$agents_md"; then
+    BLOCK_FILE="$block_tmp" awk '
+      BEGIN { while ((getline line < ENVIRON["BLOCK_FILE"]) > 0) blk = blk line ORS }
+      /<!-- skein-rules -->/ { printf "%s", blk; skip = 1; next }
+      /<!-- \/skein-rules -->/ { skip = 0; next }
+      !skip { print }
+    ' "$agents_md" > "$agents_md.skein.$$" && mv -f "$agents_md.skein.$$" "$agents_md"
+  else
+    printf '\n' >> "$agents_md"
+    cat "$block_tmp" >> "$agents_md"
+  fi
+  rm -f "$block_tmp"
+
+  # 5. 若工作区根是 Git 仓，确保 /AGENTS.local.md 被忽略
+  if [ -e "$scope/.git" ]; then
+    if git -C "$scope" ls-files --error-unmatch AGENTS.local.md >/dev/null 2>&1; then
+      gap "AGENTS.local.md 已被 git 跟踪，请先执行 git rm --cached AGENTS.local.md"
+    fi
+    local gi="$scope/.gitignore"
+    grep -qxF '/AGENTS.local.md' "$gi" 2>/dev/null || printf '\n/AGENTS.local.md\n' >> "$gi"
+  fi
+
+  # 6. 初始化独立离线知识库 Git 仓
+  local kb="$d/kb"
+  [ -e "$kb/.git" ] || git -C "$kb" init -q
+  if [ -n "$(git -C "$kb" remote 2>/dev/null || true)" ]; then
+    gap "知识库 $(wp "$kb") 配置了远程仓库，违反本地离线约束"
+  fi
+  if [ ! -f "$kb/INDEX.md" ]; then
+    cat > "$kb/INDEX.md" <<EOF
+# $name · 知识库索引
+
+> 仅作目录导航，禁止全量加载知识库正文。
+
+| 目录 | 用途 |
+|---|---|
+| \`facts/projects/\` | 各活跃子项目最小档案（≤2KB/份，按需只读当前子项目） |
+| \`facts/\` | 环境、接口与已验证硬事实 |
+| \`decisions/\` | 关键架构与方案决策及理由 |
+| \`runbooks/\` | 可复用操作手册 |
+| \`proposals/\` | 并发协作时的只读方建议与待合并提案 |
+| \`archive/\` | 已废弃历史记录 |
+EOF
+  fi
+
+  # 7. 扫描 Git 仓并生成项目档案索引（若用户给 --git-init 且无任何仓则初始化根仓）
+  local repo_list=""
+  if is_repo_root "$scope"; then
+    repo_list="."
+  fi
+  local sub cand rel
+  for sub in "$scope"/*/; do
+    [ -d "$sub" ] || continue
+    skip_dir "$(basename "${sub%/}")" && continue
+    for cand in "$sub" "$sub"*/; do
+      [ -d "$cand" ] || continue
+      skip_dir "$(basename "${cand%/}")" && continue
+      is_repo_root "$cand" || continue
+      rel="${cand#"$scope"/}"; rel="${rel%/}"
+      case $'\n'"$repo_list"$'\n' in *$'\n'"$rel"$'\n'*) continue ;; esac
+      repo_list="${repo_list}${repo_list:+$'\n'}${rel}"
+    done
+  done
+
+  if [ -z "$repo_list" ] && [ "$init_git" -eq 1 ]; then
+    git -C "$scope" init -q
+    grep -qxF '/AGENTS.local.md' "$scope/.gitignore" 2>/dev/null || printf '\n/AGENTS.local.md\n' >> "$scope/.gitignore"
+    repo_list="."
+    say "已为纯文档/非 Git 工作区初始化 Git 仓"
+  fi
+
+  local idx="$kb/facts/projects/INDEX.md"
+  if [ -n "$repo_list" ]; then
+    local tmp="$idx.$$.tmp"
+    {
+      printf '# 项目档案索引\n\n'
+      printf '> 接手时只读当前子项目对应档案，禁止全读。\n\n'
+      printf '| 仓 | 相对路径 | 档案 | 状态 |\n'
+      printf '|---|---|---|---|\n'
+      while IFS= read -r rel; do
+        [ -n "$rel" ] || continue
+        local base file st
+        if [ "$rel" = "." ]; then base="$name"; else base="$(basename "$rel")"; fi
+        file="${base}.md"
+        st="TODO"
+        if [ -f "$kb/facts/projects/$file" ]; then
+          st="$(sed -n 's/^- 状态：[[:space:]]*//p' "$kb/facts/projects/$file" | head -n 1 | tr -d '\r')"
+          [ -n "$st" ] || st="PARTIAL"
+        fi
+        printf '| `%s` | `%s` | `%s` | %s |\n' "$base" "$rel" "$file" "$st"
+      done <<< "$repo_list"
+    } > "$tmp"
+    mv -f "$tmp" "$idx"
+  fi
+
+  # 8. 生成机械地图
+  cmd_map --workspace "$scope" --kb "$kb" >/dev/null 2>&1 || true
+
+  # 9. 提交知识库
+  git -C "$kb" -c core.autocrlf=false add -A
+  if ! git -C "$kb" diff --cached --quiet; then
+    git -C "$kb" -c core.autocrlf=false -c user.name=skein -c user.email=skein@local \
+      commit -q -m "kb: init or refresh index"
+  fi
+
+  # 10. 检测外部工具就绪度（仅提示，不强阻断）
+  local has_aimem="未安装" has_kanban="未安装" has_qmd="未安装"
+  command -v ai-memory >/dev/null 2>&1 && has_aimem="已就绪"
+  command -v kanban-md >/dev/null 2>&1 && has_kanban="已就绪"
+  command -v qmd >/dev/null 2>&1 && has_qmd="已就绪"
+
+  say "=== Skein v2 建库完成 ==="
+  say "路由：$(wp "$local_file")"
+  say "数据：$(wp "$d")"
+  say "外部工具：ai-memory=$has_aimem | kanban-md=$has_kanban | qmd=$has_qmd"
+  say "下一步：为确认纳入范围的活跃子仓写最小档案（≤2KB），建完即卸载 skein-init。"
+}
+
+# ---------------- 子命令：map ----------------
+cmd_map() {
+  local workspace="" kb="" force=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --workspace) workspace="$2"; shift 2 ;;
+      --kb)        kb="$2"; shift 2 ;;
+      --force)     force=1; shift ;;
+      *) shift ;;
+    esac
+  done
+  [ -n "$workspace" ] || workspace="$(pwd)"
+  local scope
+  scope="$(cd "$workspace" && pwd -P)"
+  if [ -z "$kb" ]; then
+    [ -f "$scope/AGENTS.local.md" ] || gap "缺 AGENTS.local.md"
+    kb="$(kv "$scope/AGENTS.local.md" kb || true)"
+  fi
+  [ -d "$kb" ] || gap "知识库目录不存在：$kb"
+
+  local count=0 p base
+  for p in "$scope"/*; do
+    base="${p##*/}"
+    case "$base" in AGENTS.local.md|node_modules|.venv|venv|dist|build|target) continue ;; esac
+    [ -e "$p" ] && count=$((count + 1))
+  done
+  if [ "$count" -lt 3 ] && [ "$force" -ne 1 ]; then
+    say "顶层条目少于 3 项，跳过地图生成"
+    return 0
+  fi
+
+  local out="$kb/facts/workspace-map.md"
+  local tmp="$out.$$.tmp"
+  {
+    printf '# 工作区机械地图\n\n'
+    printf '> 生成时间：%s\n\n' "$(date '+%Y-%m-%d %H:%M')"
+    printf '| 条目 | 类型 | 最后提交 | 顶层条目数 |\n'
+    printf '|---|---|---|---:|\n'
+    for p in "$scope"/*; do
+      base="${p##*/}"
+      case "$base" in AGENTS.local.md|node_modules|.venv|venv|dist|build|target) continue ;; esac
+      [ -e "$p" ] || continue
+      local kind="文件" last="-" subs="-"
+      if [ -d "$p" ]; then
+        kind="目录"; subs=0
+        for _c in "$p"/*; do subs=$((subs + 1)); done
+        if is_repo_root "$p"; then
+          kind="git 仓"
+          last="$(git -C "$p" log -1 --format=%cs 2>/dev/null || echo '无提交')"
+        fi
+      fi
+      printf '| `%s` | %s | %s | %s |\n' "$base" "$kind" "$last" "$subs"
+    done
+  } > "$tmp"
+  mv -f "$tmp" "$out"
+  say "已更新地图：$(wp "$out")"
+}
+
+# ---------------- 子命令：mark（写前最小留痕） ----------------
+cmd_mark() {
+  load_route
+  current_repo_info
+  local id="" goal="" next="" constraint=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --id)         id="$2"; shift 2 ;;
+      --goal)       goal="$2"; shift 2 ;;
+      --next)       next="$2"; shift 2 ;;
+      --constraint) constraint="$2"; shift 2 ;;
+      -h|--help)
+        cat <<'EOF'
+用法：skein-cli mark --goal "<目标>" --next "<下一步>" [--id <任务ID>] [--constraint "<约束>"]
+EOF
+        exit 0 ;;
+      *) die "未知参数：$1" ;;
+    esac
+  done
+  [ -n "$goal" ] || die "必须提供 --goal"
+  [ -n "$next" ] || next="待定"
+
+  mkdir -p "$CKPT"
+  if [ -z "$id" ]; then
+    # 若当前子仓已有唯一活跃任务则复用，否则新建
+    local matches=() f
+    for f in "$CKPT"/*.md; do
+      [ -f "$f" ] || continue
+      if grep -qxF "repo_rel: ${REPO_REL:-.}" "$f" 2>/dev/null; then
+        matches+=("$f")
+      fi
+    done
+    if [ "${#matches[@]}" -eq 1 ]; then
+      id="$(basename "${matches[0]}" .md)"
+    else
+      id="${REPO_NAME}-$(date '+%Y%m%d-%H%M%S')"
+    fi
+  fi
+
+  local target="$CKPT/${id}.md"
+  local head_sha="none" branch="none"
+  if [ -n "$REPO" ]; then
+    head_sha="$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo 'unborn')"
+    branch="$(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'unborn')"
+  fi
+
+  local tmp="${target}.$$.tmp"
+  cat > "$tmp" <<EOF
+---
+schema_version: 2
+task_id: $id
+status: ACTIVE
+repo_rel: ${REPO_REL:-.}
+repo_path: $(wp "${REPO:-$PWD}")
+branch: $branch
+base_head: $head_sha
+updated_at: $(now_iso)
+---
+
+## 1. 最后确认的目标
+- $goal
+
+## 2. 变更过的约束
+- ${constraint:-无}
+
+## 3. 关键决定及理由
+- 无
+
+## 4. 已排除的方案
+- 无
+
+## 5. 当前待验证假设
+- 无
+
+## 6. 下一步
+- $next
+EOF
+  mv -f "$tmp" "$target"
+  say "ANCHOR_OK task_id=$id file=$(wp "$target")"
+}
+
+# ---------------- 子命令：note（追加 1 行语义锚点） ----------------
+cmd_note() {
+  load_route
+  current_repo_info
+  local id="" ntype="decision" text=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --id)   id="$2"; shift 2 ;;
+      --type) ntype="$2"; shift 2 ;;
+      -h|--help)
+        cat <<'EOF'
+用法：skein-cli note --type <goal|constraint|decision|excluded|hypothesis|next> [--id <任务ID>] "<内容>"
+EOF
+        exit 0 ;;
+      *) text="${text}${text:+ }$1"; shift ;;
+    esac
+  done
+  [ -n "$text" ] || die "缺少记录内容"
+
+  local target=""
+  if [ -n "$id" ]; then
+    target="$CKPT/${id}.md"
+  else
+    local matches=() f
+    for f in "$CKPT"/*.md; do
+      [ -f "$f" ] || continue
+      if grep -qxF "repo_rel: ${REPO_REL:-.}" "$f" 2>/dev/null; then
+        matches+=("$f")
+      fi
+    done
+    [ "${#matches[@]}" -eq 1 ] || gap "未找到当前子仓唯一活跃任务（找到 ${#matches[@]} 个），请用 --id 指定或先执行 skein-cli mark"
+    target="${matches[0]}"
+    id="$(basename "$target" .md)"
+  fi
+  [ -f "$target" ] || gap "任务锚点不存在：$target"
+
+  local heading=""
+  case "$ntype" in
+    goal)       heading="## 1. 最后确认的目标" ;;
+    constraint) heading="## 2. 变更过的约束" ;;
+    decision)   heading="## 3. 关键决定及理由" ;;
+    excluded)   heading="## 4. 已排除的方案" ;;
+    hypothesis) heading="## 5. 当前待验证假设" ;;
+    next)       heading="## 6. 下一步" ;;
+    *) die "未知 --type：$ntype（可选 goal/constraint/decision/excluded/hypothesis/next）" ;;
+  esac
+
+  local ts tmp="${target}.$$.tmp"
+  ts="$(date '+%m-%d %H:%M')"
+  HEADING="$heading" ENTRY="- [$ts] $text" NOW="$(now_iso)" awk '
+    /^updated_at:/ { print "updated_at: " ENVIRON["NOW"]; next }
+    $0 == ENVIRON["HEADING"] { print; in_sec = 1; next }
+    in_sec && /^- 无$/ { print ENVIRON["ENTRY"]; in_sec = 0; inserted = 1; next }
+    in_sec && /^## / { print ENVIRON["ENTRY"]; print ""; print; in_sec = 0; inserted = 1; next }
+    { print }
+    END { if (in_sec && !inserted) print ENVIRON["ENTRY"] }
+  ' "$target" > "$tmp"
+  mv -f "$tmp" "$target"
+  say "NOTE_OK task_id=$id type=$ntype"
+}
+
+# ---------------- 子命令：close（关闭并归档任务） ----------------
+cmd_close() {
+  load_route
+  local id="${1:-}"
+  [ -n "$id" ] || die "用法：skein-cli close <task_id>"
+  local src="$CKPT/${id}.md"
+  [ -f "$src" ] || gap "任务不存在：$src"
+  mkdir -p "$CKPT/done"
+  sed "s/^status: ACTIVE/status: CLOSED/" "$src" > "$CKPT/done/${id}.md"
+  rm -f "$src"
+  say "CLOSED task_id=$id"
+}
+
+# ---------------- 子命令：resume（一键接手上下文汇总） ----------------
+cmd_resume() {
+  load_route
+  current_repo_info
+  local id=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --id) id="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+
+  say "=== SKEIN RESUME PACKET ==="
+  say "scope: $(wp "$SCOPE")"
+  say "repo: ${REPO_REL:-.} ($(wp "${REPO:-$PWD}"))"
+
+  # 1. 后台写入冲突检测（区分“A 窗口开着已停写”与“后台命令正在写”）
+  if [ -n "$REPO" ]; then
+    local bg
+    bg="$(check_bg_writers "$REPO")"
+    if [ -n "$bg" ]; then
+      say ""
+      say "[WARN_BG_ACTIVE] 检测到疑似仍在操作当前工作树的后台进程/锁（请先核查并问用户等待或终止，严禁盲写）："
+      printf '%s\n' "$bg"
+    else
+      say "bg_conflict: none"
+    fi
+  fi
+
+  # 2. 当前子项目最小档案（严禁读其他子项目档案）
+  local brief="$KB/facts/projects/${REPO_NAME}.md"
+  say ""
+  if [ -f "$brief" ]; then
+    say "--- PROJECT_BRIEF ($(wp "$brief")) ---"
+    cat "$brief"
+  else
+    say "--- PROJECT_BRIEF: MISSING (当前子仓尚未建最小档案) ---"
+  fi
+
+  # 3. Git 实时现场
+  say ""
+  say "--- GIT_LIVE ---"
+  if [ -n "$REPO" ]; then
+    say "branch: $(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unborn)"
+    say "head: $(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo unborn)"
+    local st
+    st="$(git -C "$REPO" status --short 2>/dev/null || true)"
+    if [ -n "$st" ]; then
+      say "status:"
+      printf '%s\n' "$st" | head -n 30
+    else
+      say "status: clean"
+    fi
+    say "recent_commits:"
+    git -C "$REPO" log -n 5 --oneline 2>/dev/null || say "(尚无提交)"
+  else
+    say "not_a_git_repo"
+  fi
+
+  # 4. 活跃任务锚点定位（1 个直恢，多个列清单要求询问用户）
+  say ""
+  local matches=() f
+  if [ -n "$id" ]; then
+    [ -f "$CKPT/${id}.md" ] && matches+=("$CKPT/${id}.md")
+  else
+    for f in "$CKPT"/*.md; do
+      [ -f "$f" ] || continue
+      if grep -qxF "repo_rel: ${REPO_REL:-.}" "$f" 2>/dev/null; then
+        matches+=("$f")
+      fi
+    done
+  fi
+
+  if [ "${#matches[@]}" -eq 0 ]; then
+    say "--- TASK_ANCHOR: NONE (无显式任务锚点，请结合 ai-memory/Git 现场重建) ---"
+  elif [ "${#matches[@]}" -eq 1 ]; then
+    say "--- TASK_ANCHOR: SINGLE ($(basename "${matches[0]}" .md)) ---"
+    cat "${matches[0]}"
+  else
+    say "--- TASK_ANCHOR: MULTIPLE (${#matches[@]} 个未完任务，请先列清单问用户选哪项) ---"
+    for f in "${matches[@]}"; do
+      local tid g
+      tid="$(basename "$f" .md)"
+      g="$(awk '/^## 1\. /{flag=1;next} /^## /{flag=0} flag && /^- /{print; exit}' "$f")"
+      say "- $tid | ${g#- }"
+    done
+  fi
+
+  # 5. 外部自动留痕读取（优先 ai-memory CLI，未安装时提示可选 cass）
+  say ""
+  if command -v ai-memory >/dev/null 2>&1; then
+    say "--- EXTERNAL_CAPTURE: ai-memory (detected) ---"
+    ai-memory status --project "${REPO:-$PWD}" 2>/dev/null | head -n 40 || say "(ai-memory 未返回该项目摘要，可按需运行 ai-memory search)"
+  elif command -v cass >/dev/null 2>&1; then
+    say "--- EXTERNAL_CAPTURE: cass (fallback detected) ---"
+    say "如需回看中断前未落盘的最后几轮探索，可按需运行 cass 搜索当前目录近期会话。"
+  else
+    say "--- EXTERNAL_CAPTURE: none (仅依靠任务锚点 + Git 现场) ---"
+  fi
+
+  # 6. 并行看板状态（仅当已初始化 kanban-md 时显示紧凑视图）
+  if command -v kanban-md >/dev/null 2>&1 && [ -f "$BOARD/config.yml" ]; then
+    say ""
+    say "--- KANBAN_COMPACT ---"
+    kanban-md list --dir "$BOARD" --compact 2>/dev/null | head -n 20 || true
+  fi
+}
+
+# ---------------- 子命令：wt-add / wt-clean ----------------
+cmd_wt_add() {
+  load_route
+  current_repo_info
+  [ -n "$REPO" ] || gap "当前目录不在 Git 仓内，无法创建 worktree"
+  local task="${1:-}"
+  [ -n "$task" ] || die "用法：skein-cli wt-add <task-slug>"
+  local wt_base="$WT_ROOT/${REPO_NAME}-$(printf '%s' "$REPO" | hash8)"
+  local wt_dir="$wt_base/$task"
+  local branch="feat/${task}"
+  mkdir -p "$wt_base"
+  git -C "$REPO" worktree add -b "$branch" "$wt_dir" HEAD
+  cp "$LOCAL" "$wt_dir/AGENTS.local.md"
+  local ex
+  ex="$(git -C "$REPO" rev-parse --git-path info/exclude 2>/dev/null || true)"
+  if [ -n "$ex" ]; then
+    case "$ex" in /*|[A-Za-z]:/*) ;; *) ex="$REPO/$ex" ;; esac
+    mkdir -p "$(dirname "$ex")"
+    grep -qxF '/AGENTS.local.md' "$ex" 2>/dev/null || printf '\n/AGENTS.local.md\n' >> "$ex"
+  fi
+  say "WT_READY dir=$(wp "$wt_dir") branch=$branch"
+}
+
+cmd_wt_clean() {
+  load_route
+  current_repo_info
+  [ -n "$REPO" ] || gap "当前目录不在 Git 仓内"
+  local task="${1:-}"
+  [ -n "$task" ] || die "用法：skein-cli wt-clean <task-slug>"
+  local wt_dir="$WT_ROOT/${REPO_NAME}-$(printf '%s' "$REPO" | hash8)/$task"
+  [ -d "$wt_dir" ] || gap "worktree 目录不存在：$wt_dir"
+  # 严禁 --force，先校验除本机路由外是否有未提交改动
+  local dirty
+  dirty="$(git -C "$wt_dir" status --porcelain 2>/dev/null || true)"
+  if [ -n "$dirty" ]; then
+    gap "worktree 存在未提交改动，拒绝清理：$wt_dir"
+  fi
+  rm -f "$wt_dir/AGENTS.local.md"
+  git -C "$REPO" worktree remove "$wt_dir"
+  say "WT_REMOVED dir=$(wp "$wt_dir")"
+  say "提示：并行协作结束后，请手动通过 skills-manager 卸载 agent-collab。"
+}
+
+# ---------------- 子命令：check ----------------
+cmd_check() {
+  load_route
+  say "=== Skein v2 体检 ==="
+  say "scope: $(wp "$SCOPE")"
+  local fail=0
+  for k in scope data_dir checkpoints kb board worktree_root; do
+    if kv "$LOCAL" "$k" >/dev/null 2>&1; then
+      say "  [OK] 路由键 $k"
+    else
+      say "  [FAIL] 缺少路由键 $k"; fail=1
+    fi
+  done
+  if [ -e "$SCOPE/.git" ]; then
+    if git -C "$SCOPE" check-ignore -q AGENTS.local.md 2>/dev/null; then
+      say "  [OK] AGENTS.local.md 已加入 Git 忽略"
+    else
+      say "  [FAIL] AGENTS.local.md 未被 Git 忽略"; fail=1
+    fi
+  fi
+  if [ -z "$(git -C "$KB" remote 2>/dev/null || true)" ]; then
+    say "  [OK] 知识库无远程配置（纯本地离线）"
+  else
+    say "  [FAIL] 知识库存在远程仓库"; fail=1
+  fi
+  exit "$fail"
+}
+
+# ---------------- 入口分发 ----------------
+SUB="${1:-help}"
+shift || true
+case "$SUB" in
+  init)     cmd_init "$@" ;;
+  map)      cmd_map "$@" ;;
+  mark)     cmd_mark "$@" ;;
+  note)     cmd_note "$@" ;;
+  close)    cmd_close "$@" ;;
+  resume)   cmd_resume "$@" ;;
+  wt-add)   cmd_wt_add "$@" ;;
+  wt-clean) cmd_wt_clean "$@" ;;
+  check)    cmd_check "$@" ;;
+  -v|--version) say "skein-cli $VERSION" ;;
+  -h|--help|help)
+    cat <<'EOF'
+skein-cli v2.0.0 — Skein 机械操作单命令封装层
+
+子命令：
+  init       初始化工作区、路由、离线知识库与档案索引
+  map        刷新工作区顶层机械地图
+  mark       写前最小留痕（创建/更新任务锚点）
+  note       追加 1 行语义锚点（goal/constraint/decision/excluded/hypothesis/next）
+  close      关闭并归档已完成任务
+  resume     一键输出接手上下文包（档案+Git现场+锚点+后台进程+外部留痕）
+  wt-add     为并行子任务建独立 worktree 并复制路由
+  wt-clean   合并后安全清理 worktree（拒绝强制覆盖脏树）
+  check      只读体检路由、忽略规则与离线约束
+EOF
+    ;;
+  *) die "未知子命令：$SUB（运行 skein-cli --help 查看用法）" ;;
+esac

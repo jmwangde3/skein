@@ -1,100 +1,52 @@
 ---
 name: agent-collab
-description: 两个或以上 Agent 要在同一个项目上并行推进独立任务、需要隔离工作树与协调合并时加载。只在并行期部署，并行结束就卸。触发：并行、双 agent、worktree、合并、并行拆子任务。
+description: 双 Agent 同时在同一项目上协作时启用（支持独立子任务并行与同任务实时配合两种模式）。仅协作期由人工通过 skills-manager 挂载，协作结束即卸载。触发：并行、双 agent、实时配合、worktree、合并。
 ---
 
 # agent-collab
 
 ## 只做这一件事
 
-让两个 Agent 同时干活时不互相覆盖。**只在并行期部署，结束就卸**——留着等于每天为低频场景付上下文钱。
+让两个 Agent 在同一项目上同时干活时不互相覆盖。**仅在双人协作期挂载，结束立刻提醒用户通过 `skills-manager` 卸载。**
 
-**不做**：日常记录（`task-checkpoint`）、顺序交接（`agent-handoff`）、建库（`project-memory`）。
+**不做**：单任务中途换人接手（`agent-handoff`）、日常单人记录（`task-checkpoint`）、建库（`skein-init`）。
 
-## 开工前四步
+## 开工前先选模式（严禁混用）
 
-下面命令里的 `<id-a>` / `<id-b>` 是占位符，执行前换成真实任务 ID。直接复制会报 `No such file or directory`——bash 会把 `<xx>` 当成读文件。
+### 模式 A：独立子任务并行（各自改代码）
+适用：两个子任务互不依赖，需同时修改代码/文档。
 
-```bash
-# 工作区根：从当前目录向上找第一个含 AGENTS.local.md 的目录
-SCOPE=""
-d="$(pwd -P)"
-while :; do
-  if [ -f "$d/AGENTS.local.md" ]; then SCOPE="$d"; break; fi
-  p="$(dirname "$d")"
-  if [ "$p" = "$d" ]; then break; fi
-  d="$p"
-done
-[ -n "$SCOPE" ] || { echo "[HANDOFF_GAP] 没找到 AGENTS.local.md（应在工作区根）"; exit 1; }
-LOCAL="$SCOPE/AGENTS.local.md"
-kv() { sed -n "s/^$1:[[:space:]]*//p" "$LOCAL" | head -n 1 | tr -d '\r'; }
+1. **任务认领（有 `kanban-md` 时用它防撞车）**：
+   ```bash
+   kanban-md add "子任务 A" --dir "$BOARD"
+   kanban-md pick --claim --dir "$BOARD" --compact
+   ```
+   （未装 `kanban-md` 时，各自用独立任务 ID 与分支名隔离。）
+2. **一键开独立工作树**（一任务一目录一分支）：
+   ```bash
+   skein-cli wt-add <task-a>
+   skein-cli wt-add <task-b>
+   ```
+3. **三条硬规则**：
+   - 严禁两个 Agent 同时修改同一个未提交工作树。
+   - 知识库跨 worktree 共享：开工前点名唯一写者，另一方只写 `<kb>/proposals/`。
+   - 合并只由集成者执行：不许 `ours`/`theirs` 盲丢；同文件同段冲突交人工；验证通过后再合并。
+4. **安全收尾**：
+   合入主分支并验证通过后，运行 `skein-cli wt-clean <task-a>`（遇到脏树会拒绝，绝不用 `--force` 强删），然后提醒用户卸载 `agent-collab`。
 
-# 并行作用在"当前所在的代码仓"，不是整个工作区
-REPO="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)"
-[ -n "$REPO" ] || { echo "[HANDOFF_GAP] 当前目录不在 git 仓里，开不了 worktree"; exit 1; }
-STORE="$(kv store)"
-WT_ROOT="$(kv worktree_root)"
-[ -n "$STORE" ] && [ -n "$WT_ROOT" ] || { echo "[HANDOFF_GAP] 缺 store / worktree_root 键"; exit 1; }
-# 不同父目录下的同名仓会算出同一个目录，用仓路径的短 hash 区分
-hash8() { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; }
-WT="$WT_ROOT/$(basename "$REPO")-$(printf '%s' "$REPO" | hash8 | cut -c1-8)-worktrees"
+### 模式 B：同任务实时配合（单写者 + 只读观察者）
+适用：如 A 负责写代码，B 实时做代码审查、跑测试或查文档，需要观察**同一份未提交现场**。
 
-# 1. 拆两个互不依赖的任务
-bd -C "$STORE" create "子任务 A" -t task
-bd -C "$STORE" create "子任务 B" -t task
+1. **不开 worktree**，共享当前工作树。
+2. **显式锁定写权限**：
+   - **唯一写者（A）**：拥有源码与当前任务锚点的写权限。
+   - **只读观察者（B）**：严禁修改任何源码文件；审查结论、测试报告或修改建议仅输出到对话或 `<kb>/proposals/<日期>-review-<主题>.md`。
+3. **与中断冲突严格区分**：若 A 并非显式配合、而是意外残留后台写入命令占用现场，属于单任务中断冲突，归 `agent-handoff` 处理，不得按本模式强行介入。
 
-# 2. 两个独立 worktree（不同路径 + 不同分支）
-git -C "$REPO" worktree add -b feat/task-a "$WT/task-a" HEAD
-git -C "$REPO" worktree add -b feat/task-b "$WT/task-b" HEAD
-
-# 3. 每个 worktree 复制私有路由并核对忽略生效
-for w in task-a task-b; do
-  cp "$LOCAL" "$WT/$w/"
-  git -C "$WT/$w" check-ignore -v AGENTS.local.md
-done
-
-# 4. 各自认领（不能与 --if-assignee 同用）
-BEADS_ACTOR=agent-a bd -C "$STORE" update "<id-a>" --claim
-BEADS_ACTOR=agent-b bd -C "$STORE" update "<id-b>" --claim
-```
-
-两个任务 ID 互不依赖才能并行。有依赖就串行，别硬拆。
-
-## 并行中三条硬规则
-
-- 各自只写自己的任务 ID 和**自己的**检查点文件（一任务一文件）
-- **不同 agent 不同时改同一个未提交工作树**。如果接管时旧 agent 还在干，那就已经是并行，必须隔离 worktree——`--force` 改派任务代替不了隔离
-- **KB 单写者**：开工前点名一个人写 `kb/`，另一人只写 `proposals/`。`worktree` 隔离不了 KB——KB 是另一个 git 仓，这是最容易漏的一条
-
-## 合并只由集成者做
-
-- 不许 `ours` / `theirs` 一键丢弃
-- 冲突分级：同文件同段 → 人工处理；同文件不同段 → 自动合并后由负责 agent 验证语义；只读冲突 → 以写方为准，读方重读
-- 输出冲突检查结果与未验证清单
-- **代码没集成验收前不许 `bd close`**
-
-## 收尾
-
-```bash
-# 1. 先合并：代码没进主分支，不许删 worktree
-BASE="${BASE:-main}"     # 换成分支真名
-git -C "$REPO" checkout "$BASE"
-git -C "$REPO" merge --no-ff feat/task-a
-git -C "$REPO" merge --no-ff feat/task-b
-
-# 2. 合并成功后清目录
-git -C "$REPO" worktree remove "$WT/task-a"
-git -C "$REPO" worktree remove "$WT/task-b"
-
-# 3. skills-manager 装过才需要卸；手复制部署的直接删目录
-SM="${SM:-$(command -v skills-manager-cli || echo "$HOME/.skills-manager/bin/skills-manager-cli.exe")}"
-[ -x "$SM" ] && "$SM" projects undeploy --agent codex "$REPO" agent-collab
-```
-
-`worktree remove` 遇到脏工作树会拒绝——那是在提醒你还有东西没合并，**不要用 `--force` 跳过**。
-
-完整命令、冲突细则、合并检查清单在 `references/parallel.md`。
+完整冲突分级与合并核对清单见 `references/parallel.md`。
 
 ## 完成标志
 
-两任务都 closed、改动都在主分支、worktree 已移除、`agent-collab` 已卸载。
+- 模式 A：改动已合入主分支、验证通过、worktree 已安全清理、看板任务已关闭。
+- 模式 B：审查/测试结论已交付且未污染源码。
+- 两种模式结束时均须提醒用户：**通过 `skills-manager` 卸载 `agent-collab`**。
