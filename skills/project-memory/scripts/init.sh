@@ -127,7 +127,6 @@ cat > "$BLOCK_FILE" <<'EOF'
 ## Skein 收尾纪律
 
 - 长任务在阶段完成、决策推翻旧做法、遇阻，或用户说「先到这 / 新开会话 / 明天继续」时，**主动**写检查点，不等提醒；恢复时先读它。
-- 用户没提 handoff：检查点就够，不要另写 handoff。
 - 用户说「写 handoff」：先找 `agent-handoff` 技能。找到就加载它、按它的流程写 handoff；没找到就写检查点，回复里报路径。
 - 长任务回复末尾报 `检查点：<路径>` 或 `检查点：无（原因）`。
 - 路径从 `AGENTS.local.md` 的 `checkpoints` 键读；缺键报 `[HANDOFF_GAP]`。
