@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Skein v2.0.3 自动化冒烟测试（覆盖接手包完整性、老库收编、ai-memory 正常/失败显错与 BOM 校验）
+# Skein v2.0.4 自动化冒烟测试（覆盖接手包完整性、老库收编、ai-memory 正常/失败显错与 BOM 校验）
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -44,6 +44,13 @@ mkdir -p "$LEGACY_WS" "$LEGACY_DATA/老项目/kb/facts"
 git -C "$LEGACY_WS" init -q
 git -C "$LEGACY_WS" -c user.name=t -c user.email=t@local commit --allow-empty -q -m "legacy"
 echo "# 旧事实" > "$LEGACY_DATA/老项目/kb/facts/old.md"
+cat > "$LEGACY_WS/AGENTS.md" <<'LEG'
+# 老项目规则
+<!-- skein-rules -->
+## 自定义收尾纪律
+- 保留我自己的自定义规则
+<!-- /skein-rules -->
+LEG
 if "$CLI" init --workspace "$LEGACY_WS" --data "$LEGACY_DATA" >/dev/null 2>&1; then
   fail "未加 --adopt-existing 时不应接管无标记非空目录"
 fi
@@ -51,7 +58,11 @@ fi
 [ -f "$LEGACY_DATA/老项目/.skein-scope" ] || fail "收编后未补 .skein-scope"
 [ -f "$LEGACY_DATA/老项目/kb/facts/old.md" ] || fail "收编误删了旧知识库文件"
 [ -f "$LEGACY_DATA/老项目/kb/facts/projects/INDEX.md" ] || fail "收编未补齐 projects/INDEX.md"
-ok "老库 --adopt-existing 收编保护旧数据并补齐归属标记与档案索引"
+grep -q "保留我自己的自定义规则" "$LEGACY_WS/AGENTS.md" || fail "--adopt-existing 静默覆盖了自定义 skein-rules 块"
+"$CLI" init --workspace "$LEGACY_WS" --data "$LEGACY_DATA" --adopt-existing --update-rules >/dev/null
+grep -q "Skein v2 工作纪律" "$LEGACY_WS/AGENTS.md" || fail "--update-rules 未更新规则块"
+ls "$LEGACY_DATA/老项目/backups"/AGENTS.md.*.bak >/dev/null 2>&1 || fail "--update-rules 更新前未自动备份 AGENTS.md"
+ok "老库 --adopt-existing 默认保留自定义规则，--update-rules 自动备份后更新"
 
 # 4. check --strict 拦截缺档案，补齐 READY 档案后通过
 if (cd "$WS/sub-alpha" && "$CLI" check --strict >/dev/null 2>&1); then
@@ -96,16 +107,29 @@ echo "$res_am" | grep -q "sessions/mock-001.md" || fail "resume 未正确调用 
 
 cat > "$MOCKBIN/ai-memory" <<'EOF'
 #!/usr/bin/env bash
-echo "error: mock failure" >&2
+echo 'INFO ai_memory_cli: ai-memory starting version="3.6.3"' >&2
+echo 'Error: GET /admin/recent: server returned 404 Not Found: {"error":"project '''sub-alpha''' not found in workspace '''default'''"}' >&2
+exit 1
+EOF
+chmod +x "$MOCKBIN/ai-memory"
+res_am_404="$(cd "$WS/sub-alpha" && PATH="$MOCKBIN:$PATH" "$CLI" resume)"
+echo "$res_am_404" | grep -q "尚未产生首次捕获记录" || fail "新项目 ai-memory 404 未优雅提示"
+(cd "$WS/sub-alpha" && PATH="$MOCKBIN:$PATH" "$CLI" check --strict >/dev/null)
+
+cat > "$MOCKBIN/ai-memory" <<'EOF'
+#!/usr/bin/env bash
+echo 'INFO ai_memory_cli: ai-memory starting version="3.6.3"' >&2
+echo "Error: connection refused" >&2
 exit 2
 EOF
 chmod +x "$MOCKBIN/ai-memory"
 res_am_err="$(cd "$WS/sub-alpha" && PATH="$MOCKBIN:$PATH" "$CLI" resume)"
-echo "$res_am_err" | grep -q "\[WARN_EXTERNAL_CAPTURE\]" || fail "ai-memory 报错被静默吞掉"
+echo "$res_am_err" | grep -q "\[WARN_EXTERNAL_CAPTURE\]" || fail "ai-memory 真报错被静默吞掉"
+echo "$res_am_err" | grep -q "connection refused" || fail "ai-memory 未提取真实 Error 行"
 if (cd "$WS/sub-alpha" && PATH="$MOCKBIN:$PATH" "$CLI" check >/dev/null 2>&1); then
-  fail "ai-memory 报错时 check 不应全绿"
+  fail "ai-memory 真报错时 check 不应全绿"
 fi
-ok "ai-memory recent 正常拉取与失败显错（不静默吞错）均通过"
+ok "ai-memory 三态（正常 / 新项目404放行 / 真报错显错）均通过"
 
 # 7. 多任务歧义拦截
 (cd "$WS/sub-alpha" && "$CLI" mark --id "t-002" --goal "重构日志格式" --next "核对现有字段") >/dev/null

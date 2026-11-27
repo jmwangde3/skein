@@ -6,7 +6,7 @@
 set -euo pipefail
 shopt -s nullglob
 
-VERSION="2.0.3"
+VERSION="2.0.4"
 
 die() { printf '[SKEIN_ERR] %s\n' "$*" >&2; exit 2; }
 gap() { printf '[HANDOFF_GAP] %s\n' "$*" >&2; exit 1; }
@@ -165,7 +165,7 @@ PY
 }
 
 cmd_init() {
-  local workspace="" data_home="${SKEIN_DATA_HOME:-}" init_git=0 with_trae=0 adopt_existing=0
+  local workspace="" data_home="${SKEIN_DATA_HOME:-}" init_git=0 with_trae=0 adopt_existing=0 update_rules=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --workspace)      [ $# -ge 2 ] || die "缺 --workspace"; workspace="$2"; shift 2 ;;
@@ -173,14 +173,16 @@ cmd_init() {
       --git-init)       init_git=1; shift ;;
       --trae)           with_trae=1; shift ;;
       --adopt-existing) adopt_existing=1; shift ;;
+      --update-rules)   update_rules=1; shift ;;
       -h|--help)
         cat <<'EOF'
-用法：skein-cli init [--workspace <目录>] [--data <数据家>] [--git-init] [--trae] [--adopt-existing]
+用法：skein-cli init [--workspace <目录>] [--data <数据家>] [--git-init] [--trae] [--adopt-existing] [--update-rules]
   --workspace       工作区根目录（默认当前目录）
   --data            私有数据目录根（默认 ~/skein-data 或 $SKEIN_DATA_HOME）
   --git-init        若工作区根尚非 Git 仓且内部无子仓，则自动执行 git init
   --trae            额外生成 TRAE CN 项目规则 .trae/rules/project_rules.md
-  --adopt-existing  就地收编已有的 v1 老数据目录（补 .skein-scope 与缺失的 v2 目录/档案索引，保留全部旧数据）
+  --adopt-existing  就地收编已有老数据目录（默认保留 AGENTS.md 原有 skein-rules 块不覆盖）
+  --update-rules    显式替换 AGENTS.md 中已有的 skein-rules 块（替换前自动备份到 backups/）
 EOF
         exit 0 ;;
       *) die "未知参数：$1" ;;
@@ -264,19 +266,34 @@ EOF
 - 路径统一从 `AGENTS.local.md` 读取；缺键停手报 `[HANDOFF_GAP]`。
 <!-- /skein-rules -->
 EOF
-  if [ ! -f "$agents_md" ]; then
+  local agents_existed=0
+  [ -f "$agents_md" ] && agents_existed=1
+  if [ "$agents_existed" -eq 0 ]; then
     printf '# 工作区规则 — %s\n\n' "$name" > "$agents_md"
   fi
   if grep -q '<!-- skein-rules -->' "$agents_md"; then
-    BLOCK_FILE="$block_tmp" awk '
-      BEGIN { while ((getline line < ENVIRON["BLOCK_FILE"]) > 0) blk = blk line ORS }
-      /<!-- skein-rules -->/ { printf "%s", blk; skip = 1; next }
-      /<!-- \/skein-rules -->/ { skip = 0; next }
-      !skip { print }
-    ' "$agents_md" > "$agents_md.skein.$$" && mv -f "$agents_md.skein.$$" "$agents_md"
+    if [ "$update_rules" -eq 1 ]; then
+      local bak="$d/backups/AGENTS.md.$(date '+%Y%m%d-%H%M%S').bak"
+      cp "$agents_md" "$bak"
+      BLOCK_FILE="$block_tmp" awk '
+        BEGIN { while ((getline line < ENVIRON["BLOCK_FILE"]) > 0) blk = blk line ORS }
+        /<!-- skein-rules -->/ { printf "%s", blk; skip = 1; next }
+        /<!-- \/skein-rules -->/ { skip = 0; next }
+        !skip { print }
+      ' "$agents_md" > "$agents_md.skein.$$" && mv -f "$agents_md.skein.$$" "$agents_md"
+      say "已更新 AGENTS.md 的 skein-rules 块（原文件已备份至 $(wp "$bak")）"
+    else
+      say "保留已有 AGENTS.md 中的 skein-rules 块（未覆盖；如需替换请加 --update-rules）"
+    fi
   else
+    if [ "$agents_existed" -eq 1 ]; then
+      local bak="$d/backups/AGENTS.md.$(date '+%Y%m%d-%H%M%S').bak"
+      cp "$agents_md" "$bak"
+      say "已备份原 AGENTS.md 至 $(wp "$bak")"
+    fi
     printf '\n' >> "$agents_md"
     cat "$block_tmp" >> "$agents_md"
+    say "已向 AGENTS.md 追加 skein-rules 块：$(wp "$agents_md")"
   fi
 
   if [ "$with_trae" -eq 1 ] || [ -d "$scope/.trae" ]; then
@@ -690,9 +707,11 @@ cmd_resume() {
       printf '%s\n' "$aim_out" | head -n 30
     elif [ "$aim_rc" -eq 0 ]; then
       say "(ai-memory 正常响应，当前项目暂无近期捕获页)"
+    elif printf '%s' "$aim_out" | grep -qiE '404 Not Found|not found in workspace'; then
+      say "(ai-memory 服务在线，当前项目尚未产生首次捕获记录)"
     else
       say "[WARN_EXTERNAL_CAPTURE] ai-memory recent 执行失败（exit $aim_rc）："
-      printf '%s\n' "$aim_out" | head -n 5
+      printf '%s\n' "$aim_out" | grep -iE 'error|fail|refused|denied' | head -n 5 || printf '%s\n' "$aim_out" | tail -n 5
     fi
   elif command -v cass >/dev/null 2>&1; then
     say "--- EXTERNAL_CAPTURE: cass (fallback detected) ---"
@@ -813,8 +832,12 @@ cmd_check() {
     aim_out="$(cd "${REPO:-$PWD}" && ai-memory recent 2>&1)" || aim_rc=$?
     if [ "$aim_rc" -eq 0 ]; then
       say "  [OK]   外部捕获 ai-memory recent 正常响应"
+    elif printf '%s' "$aim_out" | grep -qiE '404 Not Found|not found in workspace'; then
+      say "  [INFO] 外部捕获 ai-memory 服务在线，当前项目尚未产生首次捕获记录（新项目正常）"
     else
-      say "  [FAIL] 外部捕获 ai-memory recent 异常（exit $aim_rc）：$(printf '%s' "$aim_out" | head -n 1)"; fail=1
+      local err_line
+      err_line="$(printf '%s\n' "$aim_out" | grep -iE 'error|fail|refused|denied' | head -n 1 || printf '%s\n' "$aim_out" | tail -n 1)"
+      say "  [FAIL] 外部捕获 ai-memory recent 异常（exit $aim_rc）：$err_line"; fail=1
     fi
   else
     say "  [INFO] 未检测到 ai-memory（仅使用任务锚点 + Git 现场）"
@@ -842,7 +865,7 @@ case "$SUB" in
   -v|--version) say "skein-cli $VERSION" ;;
   -h|--help|help)
     cat <<'EOF'
-skein-cli v2.0.3 — Skein 机械操作单命令封装层
+skein-cli v2.0.4 — Skein 机械操作单命令封装层
 
 子命令：
   init       初始化工作区、路由、离线知识库与档案索引（--trae 生成 TRAE 规则；--adopt-existing 收编老库）

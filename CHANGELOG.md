@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.0.4 (2026-11-28 · 修复 v2.0.3 验收新增问题 4 & 5)
+
+- **修复问题 4（新项目 `ai-memory recent` 404 误报 FAIL）**：`skein-cli check`（含 `--strict`）与 `resume` 识别 `404 Not Found` / `not found in workspace`，将其作为新项目正常 `[INFO]` 放行；仅对真正服务故障报 `[FAIL]` / `[WARN_EXTERNAL_CAPTURE]`，且精准提取真实 `Error:` 行而非 `INFO starting` 横幅。
+- **修复问题 5（`init --adopt-existing` 静默覆盖 `AGENTS.md` 规则块）**：`skein-cli init` 遇到已存在 `<!-- skein-rules -->` 块时默认**原样保留并提示**；仅在显式传 `--update-rules` 时替换，且修改已有 `AGENTS.md` 前一律自动备份至 `<data_dir>/backups/AGENTS.md.<时间戳>.bak` 并打印备份路径。
+
 ## v2.0.3 (2026-11-28 · 修复接手问题单全部 3 项问题)
 
 - **修复问题 1（`ai-memory` 参数错误与静默吞错）**：`bin/skein-cli` 的 `resume` 改为在项目目录执行经核验的 `ai-memory recent`（移除不存在的 `status --project`）；不再用 `2>/dev/null` 掩盖错误，命令失败时明确输出 `[WARN_EXTERNAL_CAPTURE]` 与真实退出码/报错。
