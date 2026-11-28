@@ -92,6 +92,8 @@ skip_dir() {
 }
 
 current_repo_info() {
+  local origin configured_scope first
+  BOUND_ID="$(kv "$LOCAL" worktree_task_id || true)"
   REPO="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)"
   if [ -z "$REPO" ]; then
     REPO=""
@@ -100,68 +102,131 @@ current_repo_info() {
     return 0
   fi
   REPO="$(cd "$REPO" && pwd -P)"
-  if [ "$REPO" = "$SCOPE" ]; then
+  ORIGIN_REPO="$REPO"
+  configured_scope="$SCOPE"
+  if [ -f "$REPO/.git" ]; then
+    # In a linked worktree SCOPE is the copied route, not the original workspace.
+    IFS= read -r -d '' first < <(git -C "$REPO" worktree list --porcelain -z) || gap "无法定位主工作树"
+    origin="${first#worktree }"
+    ORIGIN_REPO="$(cd "$origin" && pwd -P)"
+    configured_scope="$(kv "$LOCAL" scope || true)"
+    configured_scope="$(cd "${configured_scope:-$SCOPE}" && pwd -P)" || gap "路由中的 scope 不存在"
+  fi
+  REPO_NAME="$(basename "$ORIGIN_REPO")"
+  if [ "$ORIGIN_REPO" = "$configured_scope" ]; then
     REPO_REL="."
-    REPO_NAME="$(basename "$SCOPE")"
   else
-    REPO_REL="${REPO#"$SCOPE"/}"
-    REPO_NAME="$(basename "$REPO")"
+    REPO_REL="${ORIGIN_REPO#"$configured_scope"/}"
   fi
 }
 
-# 跨平台三层后台写入冲突探测：index.lock + 进程命令行 + 最近 10 秒工作树文件 mtime 活跃写入
+# Resolve the administrative file for this specific worktree.
 check_bg_writers() {
-  local target="$1" hits=""
+  local target="$1" lock
+  lock="$(git -C "$target" rev-parse --path-format=absolute --git-path index.lock)" || return 1
+  if [ -e "$lock" ]; then
+    printf 'GIT_INDEX_LOCK: %s（请核查是否仍在运行，或是否为残留锁）' "$lock"
+  fi
+}
 
-  if [ -f "$target/.git/index.lock" ]; then
-    hits="GIT_INDEX_LOCK: $target/.git/index.lock 存在（Git 写入进行中或异常中断）"
-  fi
+git_live_status() {
+  local repo="$1" py="" status_text
+  if command -v python3 >/dev/null 2>&1; then py=python3
+  elif command -v python >/dev/null 2>&1; then py=python; fi
+  if [ -n "$py" ] && PYTHONIOENCODING=utf-8:backslashreplace "$py" - "$(wp "$repo")" <<'PY'
+import os
+import subprocess
+import sys
+import time
 
-  local proc_hits=""
-  if command -v pgrep >/dev/null 2>&1; then
-    proc_hits="$(ps -eo pid,ppid,comm,args 2>/dev/null | grep -F "$target" | grep -Ev "skein-cli|grep|awk|sed" | head -n 5 || true)"
-  elif command -v ps >/dev/null 2>&1; then
-    proc_hits="$(ps -ef 2>/dev/null | grep -F "$target" | grep -Ev "skein-cli|grep|awk|sed" | head -n 5 || true)"
-  fi
-  if [ -n "$proc_hits" ]; then
-    hits="${hits}${hits:+$'\n'}${proc_hits}"
-  fi
-
-  local recent="" pybin=""
-  if command -v python3 >/dev/null 2>&1; then
-    pybin="python3"
-  elif command -v python >/dev/null 2>&1; then
-    pybin="python"
-  fi
-  if [ -n "$pybin" ]; then
-    recent="$("$pybin" - "$target" << 'PY' 2>/dev/null || true
-import os, sys, time
 root = sys.argv[1]
-now = time.time()
-found = []
-for dp, dn, fn in os.walk(root):
-    dn[:] = [d for d in dn if d not in ('.git', 'node_modules', '.venv', 'venv', 'dist', 'build', 'target')]
-    for f in fn:
-        p = os.path.join(dp, f)
-        try:
-            age = now - os.path.getmtime(p)
-            if 0 <= age <= 10:
-                found.append(f"RECENT_WRITE ({age:.1f}s ago): {os.path.relpath(p, root)}")
-                if len(found) >= 5:
-                    break
-        except OSError:
-            pass
-    if len(found) >= 5:
-        break
-print("\n".join(found))
-PY
-)"
-  fi
-  if [ -n "$recent" ]; then
-    hits="${hits}${hits:+$'\n'}${recent}"
-  fi
+raw = subprocess.check_output(["git", "-C", root, "status", "--porcelain=v1", "-z",
+                               "--untracked-files=normal"])
+if not raw:
+    print("status: clean")
+    sys.exit(0)
 
-  printf '%s' "$hits"
+def sample(path):
+    try:
+        st = os.lstat(os.path.join(root, path))
+        return st.st_mtime_ns, st.st_size
+    except OSError:
+        return None
+
+def display(path):
+    return ascii(path) if any(ord(c) < 32 for c in path) else path
+
+print("status:")
+records = iter(raw.split(b"\0"))
+recent = {}
+for n, record in enumerate(records):
+    if not record:
+        break
+    if n == 30:
+        print("…（git status 可展开）")
+        break
+    flags = record[:2].decode("ascii")
+    path = os.fsdecode(record[3:])
+    if "R" in flags or "C" in flags:
+        old = os.fsdecode(next(records))
+        print(f"{flags} {display(old)} -> {display(path)}")
+    else:
+        print(f"{flags} {display(path)}")
+    before = sample(path)
+    if before and abs(time.time_ns() - before[0]) <= 10_000_000_000:
+        recent[path] = before
+if recent:
+    time.sleep(0.25)
+    for path, before in recent.items():
+        if sample(path) != before:
+            print(f"[WARN_BG_ACTIVE] 采样期间文件继续变化，请核查：{display(path)}")
+            break
+PY
+  then return 0; fi
+  status_text="$(git -C "$repo" status --short)" || return 1
+  printf 'status: %s\n' "${status_text:-clean}" | sed -n '1,31p'
+  say "write_probe: unavailable（结合已知后台命令核查）"
+}
+
+# Restrict checkpoint lookup to this working directory. Older v2 checkpoints
+# already contain repo_path, including those whose repo_rel was incorrectly ".".
+anchor_here() {
+  local path
+  path="$(kv "$1" repo_path || true)"
+  if [ -n "$path" ]; then
+    [ "$path" = "$ANCHOR_PATH" ]
+  else
+    [ -z "$BOUND_ID" ] && [ "${REPO:-}" = "${ORIGIN_REPO:-}" ] &&
+      grep -qxF "repo_rel: ${REPO_REL:-.}" "$1"
+  fi
+}
+
+validate_id() {
+  case "$1" in .|..|*/*|*'\'*) die "无效任务 ID" ;; esac
+}
+
+select_anchors() {
+  local id="$1" f
+  MATCHES=()
+  ANCHOR_PATH="$(wp "${REPO:-$PWD}")"
+  if [ -n "$BOUND_ID" ] && [ -n "$id" ] && [ "$id" != "$BOUND_ID" ]; then
+    gap "此工作树绑定任务 $BOUND_ID"
+  fi
+  id="${id:-$BOUND_ID}"
+  if [ -n "$id" ]; then
+    validate_id "$id"
+    f="$CKPT/$id.md"
+    if [ -f "$f" ]; then
+      anchor_here "$f" || gap "任务 $id 属于其他工作现场"
+      MATCHES+=("$f")
+    fi
+  else
+    for f in "$CKPT"/*.md; do
+      [ -f "$f" ] || continue
+      if anchor_here "$f"; then MATCHES+=("$f"); fi
+    done
+  fi
+  return 0
 }
 
 cmd_init() {
@@ -260,8 +325,8 @@ EOF
 <!-- skein-rules -->
 ## Skein v2 工作纪律
 
-- 首次实质修改文件或启动长耗时操作前，运行 `skein-cli mark --goal "<目标>" --next "<下一步>"` 留最小锚点。
-- 目标/约束变更、做出关键决策或排除某方案时，运行 `skein-cli note --type <decision|constraint|excluded|hypothesis|next> "<一句话>"`。
+- 一次可完成、易于重做且没有待交接决定的小改动，可直接处理，零次 Skein 专用调用。其余可能留下半成品的任务，首次实质修改或启动长耗时操作前，运行 `skein-cli mark --goal "<目标>" --next "<下一步>"` 留最小锚点。
+- 目标/约束变更、做出关键决策或排除某方案时，运行 `skein-cli note --type <goal|decision|constraint|excluded|hypothesis|next> "<一句话>"`。
 - 换助手、新会话或用户说「接手」时，运行 `skein-cli resume`（单未完任务直接恢复，多任务先问用户）；同会话说「继续」不触发接手。
 - 路径统一从 `AGENTS.local.md` 读取；缺键停手报 `[HANDOFF_GAP]`。
 <!-- /skein-rules -->
@@ -320,7 +385,9 @@ EOF
   if [ -n "$(git -C "$kb" remote 2>/dev/null || true)" ]; then
     gap "知识库 $(wp "$kb") 配置了远程仓库，违反本地离线约束"
   fi
+  local generated=()
   if [ ! -f "$kb/INDEX.md" ]; then
+    generated+=(INDEX.md)
     cat > "$kb/INDEX.md" <<EOF
 # $name · 知识库索引
 
@@ -384,14 +451,20 @@ EOF
       done <<< "$repo_list"
     } > "$tmp"
     mv -f "$tmp" "$idx"
+    generated+=(facts/projects/INDEX.md)
   fi
 
-  cmd_map --workspace "$scope" --kb "$kb" >/dev/null 2>&1 || true
-
-  git -C "$kb" -c core.autocrlf=false add -A
-  if ! git -C "$kb" diff --cached --quiet; then
-    git -C "$kb" -c core.autocrlf=false -c user.name=skein -c user.email=skein@local \
-      commit -q -m "kb: init or refresh index"
+  local map_written=0
+  cmd_map --workspace "$scope" --kb "$kb" >/dev/null
+  if [ "$map_written" -eq 1 ]; then
+    generated+=(facts/workspace-map.md)
+  fi
+  if [ "${#generated[@]}" -gt 0 ]; then
+    git -C "$kb" -c core.autocrlf=false add -- "${generated[@]}"
+    if ! git -C "$kb" diff --cached --quiet -- "${generated[@]}"; then
+      git -C "$kb" -c core.autocrlf=false -c user.name=skein -c user.email=skein@local \
+        commit -q --only -m "kb: init or refresh index" -- "${generated[@]}"
+    fi
   fi
 
   local has_aimem="未安装" has_kanban="未安装" has_qmd="未安装"
@@ -460,7 +533,36 @@ cmd_map() {
     done
   } > "$tmp"
   mv -f "$tmp" "$out"
+  map_written=1
   say "已更新地图：$(wp "$out")"
+}
+
+# Show the newest goal/next. Keep a short window for additive sections;
+# omitted records remain accessible in the original anchor via --full.
+anchor_view() {
+  awk -v mode="$1" '
+    /^## [1-6]\. / { section = substr($0, 4, 1) + 0; title[section] = $0; next }
+    section && /^- / {
+      value = substr($0, 3)
+      sub(/^\[[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]\] /, "", value)
+      n = ++count[section]
+      recent[section, n % 3] = value
+    }
+    END {
+      if (mode == "goal") { print recent[1, count[1] % 3]; exit }
+      for (s = 1; s <= 6; s++) {
+        print title[s]
+        keep = (s == 1 || s == 6) ? 1 : 3
+        first = count[s] > keep ? count[s] - keep + 1 : 1
+        if (first > 1) print "  （另有 " (first - 1) " 条历史记录，resume --full 查看）"
+        for (i = first; i <= count[s]; i++) {
+          value = recent[s, i % 3]
+          if (length(value) > 240) value = substr(value, 1, 240) "…（--full）"
+          print "- " value
+        }
+      }
+    }
+  ' "$2"
 }
 
 cmd_mark() {
@@ -485,20 +587,21 @@ EOF
   [ -n "$next" ] || next="待定"
 
   mkdir -p "$CKPT"
-  if [ -z "$id" ]; then
-    local matches=() f
-    for f in "$CKPT"/*.md; do
-      [ -f "$f" ] || continue
-      if grep -qxF "repo_rel: ${REPO_REL:-.}" "$f" 2>/dev/null; then
-        matches+=("$f")
-      fi
-    done
-    if [ "${#matches[@]}" -eq 1 ]; then
-      id="$(basename "${matches[0]}" .md)"
-    else
-      id="${REPO_NAME}-$(date '+%Y%m%d-%H%M%S')"
-    fi
+  select_anchors "$id"
+  if [ "${#MATCHES[@]}" -gt 1 ]; then
+    gap "当前现场有多个任务，请用 --id 选择已有任务或创建新任务"
   fi
+  if [ "${#MATCHES[@]}" -eq 1 ]; then
+    local existing="${MATCHES[0]}" previous_goal
+    previous_goal="$(anchor_view goal "$existing")"
+    if [ "$goal" != "$previous_goal" ]; then
+      gap "已有任务 $(basename "$existing" .md) 的目标不同。新任务请指定新 --id，目标变更请用 note --type goal"
+    fi
+    say "ANCHOR_OK task_id=$(basename "$existing" .md) reused=1（已保留记录，变更用 note）"
+    return 0
+  fi
+  id="${id:-$BOUND_ID}"
+  [ -n "$id" ] || id="${REPO_NAME}-$(date '+%Y%m%d-%H%M%S')-$$"
 
   local target="$CKPT/${id}.md"
   local head_sha="none" branch="none"
@@ -560,22 +663,10 @@ EOF
   done
   [ -n "$text" ] || die "缺少记录内容"
 
-  local target=""
-  if [ -n "$id" ]; then
-    target="$CKPT/${id}.md"
-  else
-    local matches=() f
-    for f in "$CKPT"/*.md; do
-      [ -f "$f" ] || continue
-      if grep -qxF "repo_rel: ${REPO_REL:-.}" "$f" 2>/dev/null; then
-        matches+=("$f")
-      fi
-    done
-    [ "${#matches[@]}" -eq 1 ] || gap "未找到当前子仓唯一活跃任务（找到 ${#matches[@]} 个），请用 --id 指定或先执行 skein-cli mark"
-    target="${matches[0]}"
-    id="$(basename "$target" .md)"
-  fi
-  [ -f "$target" ] || gap "任务锚点不存在：$target"
+  select_anchors "$id"
+  [ "${#MATCHES[@]}" -eq 1 ] || gap "当前现场匹配 ${#MATCHES[@]} 个任务，请用 --id 指定或先 mark"
+  local target="${MATCHES[0]}"
+  id="$(basename "$target" .md)"
 
   local heading=""
   case "$ntype" in
@@ -606,6 +697,10 @@ cmd_close() {
   load_route
   local id="${1:-}"
   [ -n "$id" ] || die "用法：skein-cli close <task_id>"
+  validate_id "$id"
+  local bound
+  bound="$(kv "$LOCAL" worktree_task_id || true)"
+  [ -z "$bound" ] || [ "$bound" = "$id" ] || gap "此工作树绑定任务 $bound"
   local src="$CKPT/${id}.md"
   [ -f "$src" ] || gap "任务不存在：$src"
   mkdir -p "$CKPT/done"
@@ -617,11 +712,12 @@ cmd_close() {
 cmd_resume() {
   load_route
   current_repo_info
-  local id=""
+  local id="" full=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --id) id="$2"; shift 2 ;;
-      *) shift ;;
+      --full) full=1; shift ;;
+      *) die "未知参数：$1" ;;
     esac
   done
 
@@ -631,13 +727,13 @@ cmd_resume() {
 
   if [ -n "$REPO" ]; then
     local bg
-    bg="$(check_bg_writers "$REPO")"
+    bg="$(check_bg_writers "$REPO")" || gap "无法核对当前工作树的 Git 锁"
     if [ -n "$bg" ]; then
       say ""
-      say "[WARN_BG_ACTIVE] 检测到疑似仍在操作当前工作树的后台进程/锁/近期写入（请先核查并问用户等待或终止，严禁盲写）："
+      say "[WARN_BG_ACTIVE] 检测到当前工作树的 Git 锁，请先核查进程和产物再决定是否等待："
       printf '%s\n' "$bg"
     else
-      say "bg_conflict: none"
+      say "git_index_lock: none（普通后台命令须结合已知进程及产物核查）"
     fi
   fi
 
@@ -655,13 +751,15 @@ cmd_resume() {
   if [ -n "$REPO" ]; then
     say "branch: $(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unborn)"
     say "head: $(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo unborn)"
-    local st
-    st="$(git -C "$REPO" status --short 2>/dev/null || true)"
-    if [ -n "$st" ]; then
-      say "status:"
-      printf '%s\n' "$st" | head -n 30
-    else
-      say "status: clean"
+    local packet
+    packet="$(git_live_status "$REPO")" || gap "无法核对 Git 工作树状态"
+    printf '%s\n' "$packet"
+    if [ -n "$bg" ] || [[ "$packet" == *"[WARN_BG_ACTIVE]"* ]]; then
+      # Command-line matches are clues, not proof of ownership. Only show PID/name.
+      ps -eo pid=,comm=,args= 2>/dev/null | awk -v root="$REPO" -v native="$(wp "$REPO")" '
+        (index($0,root) || index($0,native)) && $2 !~ /^(awk|ps|bash|sh)$/ &&
+        !/skein-cli/ { if (++n <= 5) print "process_hint:", $1, $2 }
+      ' || true
     fi
     say "recent_commits:"
     git -C "$REPO" log -n 5 --oneline 2>/dev/null || say "(尚无提交)"
@@ -670,30 +768,21 @@ cmd_resume() {
   fi
 
   say ""
-  local matches=() f
-  if [ -n "$id" ]; then
-    [ -f "$CKPT/${id}.md" ] && matches+=("$CKPT/${id}.md")
-  else
-    for f in "$CKPT"/*.md; do
-      [ -f "$f" ] || continue
-      if grep -qxF "repo_rel: ${REPO_REL:-.}" "$f" 2>/dev/null; then
-        matches+=("$f")
-      fi
-    done
-  fi
-
-  if [ "${#matches[@]}" -eq 0 ]; then
+  select_anchors "$id"
+  local f
+  if [ -n "$id" ] && [ "${#MATCHES[@]}" -eq 0 ]; then gap "指定的任务不存在：$id"; fi
+  if [ "${#MATCHES[@]}" -eq 0 ]; then
     say "--- TASK_ANCHOR: NONE (无显式任务锚点，请结合 ai-memory/Git 现场重建) ---"
-  elif [ "${#matches[@]}" -eq 1 ]; then
-    say "--- TASK_ANCHOR: SINGLE ($(basename "${matches[0]}" .md)) ---"
-    cat "${matches[0]}"
+  elif [ "${#MATCHES[@]}" -eq 1 ]; then
+    say "--- TASK_ANCHOR: SINGLE ($(basename "${MATCHES[0]}" .md)) ---"
+    if [ "$full" -eq 1 ]; then cat "${MATCHES[0]}"; else anchor_view compact "${MATCHES[0]}"; fi
   else
-    say "--- TASK_ANCHOR: MULTIPLE (${#matches[@]} 个未完任务，请先列清单问用户选哪项) ---"
-    for f in "${matches[@]}"; do
+    say "--- TASK_ANCHOR: MULTIPLE (${#MATCHES[@]} 个未完任务，请先列清单问用户选哪项) ---"
+    for f in "${MATCHES[@]}"; do
       local tid g
       tid="$(basename "$f" .md)"
-      g="$(awk '/^## 1\. /{flag=1;next} /^## /{flag=0} flag && /^- /{print; exit}' "$f")"
-      say "- $tid | ${g#- }"
+      g="$(anchor_view goal "$f")"
+      say "- $tid | $g"
     done
   fi
 
@@ -704,7 +793,7 @@ cmd_resume() {
     local aim_out="" aim_rc=0
     aim_out="$(cd "${REPO:-$PWD}" && ai-memory recent 2>&1)" || aim_rc=$?
     if [ "$aim_rc" -eq 0 ] && [ -n "$aim_out" ]; then
-      printf '%s\n' "$aim_out" | head -n 30
+      printf '%s\n' "$aim_out" | sed -n '1,30p'
     elif [ "$aim_rc" -eq 0 ]; then
       say "(ai-memory 正常响应，当前项目暂无近期捕获页)"
     elif printf '%s' "$aim_out" | grep -qiE '404 Not Found|not found in workspace'; then
@@ -733,12 +822,14 @@ cmd_wt_add() {
   [ -n "$REPO" ] || gap "当前目录不在 Git 仓内，无法创建 worktree"
   local task="${1:-}"
   [ -n "$task" ] || die "用法：skein-cli wt-add <task-slug>"
-  local wt_base="$WT_ROOT/${REPO_NAME}-$(printf '%s' "$REPO" | hash8)"
+  local wt_base="$WT_ROOT/${REPO_NAME}-$(printf '%s' "$ORIGIN_REPO" | hash8)"
   local wt_dir="$wt_base/$task"
   local branch="feat/${task}"
   mkdir -p "$wt_base"
   git -C "$REPO" worktree add -b "$branch" "$wt_dir" HEAD
-  cp "$LOCAL" "$wt_dir/AGENTS.local.md"
+  local task_id
+  task_id="wt-$(printf '%s\n%s' "$ORIGIN_REPO" "$task" | hash8)-${task##*/}"
+  { sed '/^worktree_task_id:/d' "$LOCAL"; printf '\nworktree_task_id: %s\n' "$task_id"; } > "$wt_dir/AGENTS.local.md"
   local ex
   ex="$(git -C "$REPO" rev-parse --git-path info/exclude 2>/dev/null || true)"
   if [ -n "$ex" ]; then
@@ -746,7 +837,7 @@ cmd_wt_add() {
     mkdir -p "$(dirname "$ex")"
     grep -qxF '/AGENTS.local.md' "$ex" 2>/dev/null || printf '\n/AGENTS.local.md\n' >> "$ex"
   fi
-  say "WT_READY dir=$(wp "$wt_dir") branch=$branch"
+  say "WT_READY dir=$(wp "$wt_dir") branch=$branch task_id=$task_id"
 }
 
 cmd_wt_clean() {
@@ -755,14 +846,13 @@ cmd_wt_clean() {
   [ -n "$REPO" ] || gap "当前目录不在 Git 仓内"
   local task="${1:-}"
   [ -n "$task" ] || die "用法：skein-cli wt-clean <task-slug>"
-  local wt_dir="$WT_ROOT/${REPO_NAME}-$(printf '%s' "$REPO" | hash8)/$task"
+  local wt_dir="$WT_ROOT/${REPO_NAME}-$(printf '%s' "$ORIGIN_REPO" | hash8)/$task"
   [ -d "$wt_dir" ] || gap "worktree 目录不存在：$wt_dir"
   local dirty
-  dirty="$(git -C "$wt_dir" status --porcelain 2>/dev/null || true)"
+  dirty="$(git -C "$wt_dir" status --porcelain)" || gap "无法核查工作树，保留原目录"
   if [ -n "$dirty" ]; then
     gap "worktree 存在未提交改动，拒绝清理：$wt_dir"
   fi
-  rm -f "$wt_dir/AGENTS.local.md"
   git -C "$REPO" worktree remove "$wt_dir"
   say "WT_REMOVED dir=$(wp "$wt_dir")"
   say "提示：并行协作结束后，请手动通过 skills-manager 卸载 agent-collab。"
@@ -865,15 +955,15 @@ case "$SUB" in
   -v|--version) say "skein-cli $VERSION" ;;
   -h|--help|help)
     cat <<'EOF'
-skein-cli v2.0.5 — Skein 机械操作单命令封装层
+skein-cli v2.0.6 — Skein 机械操作单命令封装层
 
 子命令：
   init       初始化工作区、路由、离线知识库与档案索引（--trae 生成 TRAE 规则；--adopt-existing 收编老库）
   map        刷新工作区顶层机械地图
-  mark       写前最小留痕（创建/更新任务锚点）
+  mark       写前最小留痕（创建/复用任务锚点，更新用 note）
   note       追加 1 行语义锚点（goal/constraint/decision/excluded/hypothesis/next）
   close      关闭并归档已完成任务
-  resume     一键输出接手上下文包（档案+Git现场+锚点+后台写入探测+ai-memory recent）
+  resume     默认简报，--full 展开完整任务锚点。输出接手上下文包（档案+Git现场+锚点+后台写入探测+ai-memory recent）
   wt-add     为并行子任务建独立 worktree 并复制路由
   wt-clean   合并后安全清理 worktree（拒绝强制覆盖脏树）
   check      体检路由、归属标记、最小档案与 ai-memory 连通性（--strict 将 WARN 视为失败）

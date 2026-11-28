@@ -27,6 +27,6 @@ description: 大型复杂项目按需检索知识库、回读历史决策原文�
 
 - 只写长期有效内容：硬事实进 `facts/`、方案决策及理由进 `decisions/`、可复用操作进 `runbooks/`；临时任务进度不进知识库。
 - **并发期单写者**：双 Agent 协作时仅指定写者直写 `<kb>`，另一方只写 `<kb>/proposals/<日期>-<子项目>-<主题>.md`（附证据），由写者核实后合并提交。
-- 每次写回必须 `git -C "$KB" add -- <限定文件> && git -C "$KB" commit --only -m "kb: <摘要>"`，且确认 `git -C "$KB" remote` 为空（纯离线）。
+- 每次写回必须 `git -C "$KB" add -- <限定文件> && git -C "$KB" commit --only -m "kb: <摘要>" -- <限定文件>`，且确认 `git -C "$KB" remote` 为空（纯离线）。
 
 检索命令细节与索引整理阈值见 `references/search.md`。

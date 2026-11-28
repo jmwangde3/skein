@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
-# Skein v2.0.5 自动化冒烟测试（覆盖接手包完整性、老库收编、ai-memory 正常/失败显错与 BOM 校验）
+# Skein v2.0.6 自动化冒烟测试（覆盖接手包完整性、老库收编、ai-memory 正常/失败显错与 BOM 校验）
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLI="$ROOT/bin/skein-cli"
 chmod +x "$CLI"
 
-TMP="$(mktemp -d "$ROOT/.smoke-tmp.XXXXXX")"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/skein-smoke.XXXXXX")"
+TMP="$(cd "$TMP" && pwd -P)"
 trap 'rm -rf "$TMP"' EXIT
+
+# Use local fixtures even when the workstation has a running capture service.
+mkdir -p "$TMP/mockbin"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/mockbin/ai-memory"
+chmod +x "$TMP/mockbin/ai-memory"
+export PATH="$TMP/mockbin:$PATH"
 
 PASS=0
 ok() { PASS=$((PASS + 1)); printf '[PASS %02d] %s\n' "$PASS" "$1"; }
@@ -64,6 +71,17 @@ grep -q "Skein v2 工作纪律" "$LEGACY_WS/AGENTS.md" || fail "--update-rules �
 ls "$LEGACY_DATA/老项目/backups"/AGENTS.md.*.bak >/dev/null 2>&1 || fail "--update-rules 更新前未自动备份 AGENTS.md"
 ok "老库 --adopt-existing 默认保留自定义规则，--update-rules 自动备份后更新"
 
+# A generated-file refresh must preserve unrelated work and staging state.
+kb="$DATA/测试工作区/kb"
+echo "草稿" > "$kb/facts/draft.md"
+git -C "$kb" add -- facts/draft.md
+echo "新草稿" > "$kb/facts/pending.md"
+echo "地图变化" > "$WS/extra.txt"
+"$CLI" init --workspace "$WS" --data "$DATA" >/dev/null
+git -C "$kb" diff --cached --name-only | grep -qx 'facts/draft.md' || fail "刷新吞掉已暂存草稿"
+if git -C "$kb" ls-files --error-unmatch facts/pending.md >/dev/null 2>&1; then fail "刷新提交无关文件"; fi
+ok "刷新知识库仅提交工具生成的文件"
+
 # 4. check --strict 拦截缺档案，补齐 READY 档案后通过
 if (cd "$WS/sub-alpha" && "$CLI" check --strict >/dev/null 2>&1); then
   fail "缺最小档案时 check --strict 不应通过"
@@ -87,6 +105,16 @@ echo "$res" | grep -q "PROJECT_BRIEF (" || fail "resume 未输出最小档案"
 echo "$res" | grep -q "TASK_ANCHOR: SINGLE (t-001)" || fail "单任务自动定位失败"
 echo "$res" | grep -q "排除 JWT 方案" || fail "语义锚点未出现在 resume 输出中"
 ok "写前留痕、语义锚点追加与完整接手包（含最小档案）通过"
+
+(cd "$WS/sub-alpha" && "$CLI" mark --goal "实现登录校验" --next "另一第一步") >/dev/null
+again="$(cd "$WS/sub-alpha" && "$CLI" resume --full)"
+grep -q '排除 JWT 方案' <<< "$again" && grep -q '本地配置均为 UTF-8' <<< "$again" || fail "重复 mark 丢失语义记录"
+(cd "$WS/sub-alpha" && "$CLI" note --type goal "只检查登录校验") >/dev/null
+(cd "$WS/sub-alpha" && "$CLI" note --type next "审查入口") >/dev/null
+compact="$(cd "$WS/sub-alpha" && "$CLI" resume)"
+grep -q '只检查登录校验' <<< "$compact" && grep -q '审查入口' <<< "$compact" || fail "摘要漏掉最新目标或下一步"
+if grep -q '实现登录校验' <<< "$compact"; then fail "摘要返回旧目标"; fi
+ok "重复 mark 保留历史，简报选择最新目标与下一步"
 
 # 6. ai-memory recent 正常调用与失败显错（禁止静默吞错）
 MOCKBIN="$TMP/mockbin"
@@ -131,10 +159,21 @@ if (cd "$WS/sub-alpha" && PATH="$MOCKBIN:$PATH" "$CLI" check >/dev/null 2>&1); t
 fi
 ok "ai-memory 三态（正常 / 新项目404放行 / 真报错显错）均通过"
 
+# Ensure long-running anchors stay short, while full history remains recoverable.
+for n in 1 2 3 4 5; do
+  (cd "$WS/sub-alpha" && "$CLI" note --type decision "历史判断-$n") >/dev/null
+done
+compact="$(cd "$WS/sub-alpha" && "$CLI" resume)"
+full="$(cd "$WS/sub-alpha" && "$CLI" resume --full)"
+grep -q '历史判断-1' <<< "$full" && grep -q '历史判断-5' <<< "$compact" || fail "历史或新判断缺失"
+if grep -q '历史判断-1' <<< "$compact"; then fail "简报超出每类记录上限"; fi
+grep -q 'resume --full' <<< "$compact" || fail "摘要未提示截断"
+
 # 7. 多任务歧义拦截
 (cd "$WS/sub-alpha" && "$CLI" mark --id "t-002" --goal "重构日志格式" --next "核对现有字段") >/dev/null
 res2="$(cd "$WS/sub-alpha" && "$CLI" resume)"
 echo "$res2" | grep -q "TASK_ANCHOR: MULTIPLE (2" || fail "多任务歧义未触发提示"
+grep -q 't-001 | 只检查登录校验' <<< "$res2" || fail "候选列表使用了旧目标"
 ok "多任务歧义拦截通过"
 
 # 8. 关闭任务后回到单任务
@@ -143,18 +182,52 @@ res3="$(cd "$WS/sub-alpha" && "$CLI" resume)"
 echo "$res3" | grep -q "TASK_ANCHOR: SINGLE (t-001)" || fail "关闭任务后未回归单任务"
 ok "任务归档与状态回归通过"
 
-# 9. E5 活跃写入兜底探测
-echo "bg-write" > "$WS/sub-alpha/bg_test.log"
+# A finished write must not trigger the "wait or terminate" gate.
+echo "finished" > "$WS/sub-alpha/bg_test.log"
 res_bg="$(cd "$WS/sub-alpha" && "$CLI" resume)"
-echo "$res_bg" | grep -q "\[WARN_BG_ACTIVE\]" || fail "近期活跃写入未被 resume 检出"
-echo "$res_bg" | grep -q "RECENT_WRITE" || fail "RECENT_WRITE 标记缺失"
+if grep -qF '[WARN_BG_ACTIVE]' <<< "$res_bg"; then fail "一次保存误报正在写入"; fi
+if ! grep -q 'write_probe: unavailable' <<< "$res_bg"; then
+  # Stop the fixture even if a probe fails; it never writes outside TMP.
+  (
+    while [ -e "$WS/sub-alpha/bg_test.log" ]; do
+      printf 'x' >> "$WS/sub-alpha/bg_test.log"
+      sleep 0.05
+    done
+  ) &
+  writer_pid=$!
+  active="$(cd "$WS/sub-alpha" && "$CLI" resume)" || { kill "$writer_pid" 2>/dev/null || true; fail "写入采样失败"; }
+  kill "$writer_pid" 2>/dev/null || true
+  wait "$writer_pid" 2>/dev/null || true
+  grep -qF '[WARN_BG_ACTIVE]' <<< "$active" || fail "漏检连续写入"
+fi
 rm -f "$WS/sub-alpha/bg_test.log"
-ok "E5 工作树近期活跃写入兜底探测通过"
+ok "区分已完成的保存与采样期间的持续写入"
 
 # 10. 并行 worktree 隔离与脏树防误删
 wt_out="$(cd "$WS/sub-alpha" && "$CLI" wt-add "mod-a")"
-wt_dir="$(printf '%s\n' "$wt_out" | sed -n 's/^WT_READY dir=\([^ ]*\).*/\1/p')"
+wt_dir="${wt_out#*WT_READY dir=}"; wt_dir="${wt_dir% branch=*}"
 [ -d "$wt_dir" ] && [ -f "$wt_dir/AGENTS.local.md" ] || fail "worktree 创建或路由复制失败"
+wt_out2="$(cd "$WS/sub-alpha" && "$CLI" wt-add "mod-b")"
+wt_dir2="${wt_out2#*WT_READY dir=}"; wt_dir2="${wt_dir2% branch=*}"
+(cd "$wt_dir" && "$CLI" mark --goal "模块 A" --next "A1") >/dev/null
+(cd "$wt_dir2" && "$CLI" mark --goal "模块 B" --next "B1") >/dev/null
+wa="$(cd "$wt_dir" && "$CLI" resume)"
+wb="$(cd "$wt_dir2" && "$CLI" resume)"
+for packet in "$wa" "$wb"; do
+  grep -q 'PROJECT_BRIEF (' <<< "$packet" || fail "worktree 未找到原项目档案"
+  grep -q 'TASK_ANCHOR: SINGLE' <<< "$packet" || fail "worktree 未匹配唯一任务"
+done
+grep -q '模块 A' <<< "$wa" && grep -q '模块 B' <<< "$wb" || fail "worktree 任务不匹配"
+if grep -q '模块 B' <<< "$wa" || grep -q '模块 A' <<< "$wb"; then fail "worktree 串任务"; fi
+lock="$(git -C "$wt_dir" rev-parse --path-format=absolute --git-path index.lock)"
+touch "$lock"
+locked="$(cd "$wt_dir" && "$CLI" resume)"
+other="$(cd "$wt_dir2" && "$CLI" resume)"
+rm -f "$lock"
+grep -q 'GIT_INDEX_LOCK:' <<< "$locked" || fail "漏检 linked worktree 的锁"
+if grep -q 'GIT_INDEX_LOCK:' <<< "$other"; then fail "误报其他工作树的锁"; fi
+(cd "$WS/sub-alpha" && "$CLI" wt-clean "mod-b") >/dev/null
+ok "独立 worktree 各自恢复，读取原项目档案并区分真实索引锁"
 echo "dirty" > "$wt_dir/uncommitted.txt"
 if (cd "$WS/sub-alpha" && "$CLI" wt-clean "mod-a" >/dev/null 2>&1); then
   fail "脏 worktree 被误删"

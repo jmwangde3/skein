@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.0.6 (2026-11-28 · 接手简报精炼 + mark 语义保留 + 短任务免维护)
+
+- 重复 `mark` 保留语义记录，linked worktree 单独绑定任务并复用原项目档案。默认接手简报展示最新目标，可用 `resume --full` 展开。
+- 接手检查使用当前工作树的真实索引锁和短间隔变化证据，取消整树 mtime 扫描。统一短任务免维护规则。
+- 修正知识库提交范围、并行认领示例、Windows 强制升级和仓外冒烟测试目录。
+
 ## v2.0.5 (2026-11-28 · 隔离「接手」与「继续」触发词 + 修复悬空引用)
 
 - **词面隔离接手触发词**：将 `agent-handoff` 触发词从「继续」改为「接手」，彻底避免同会话断流/暂停后说「继续」误触发 `skein-cli resume`（同步更新 `SKILL.md`、`bin/skein-cli`、`docs/requirements.md`、`docs/design.md`、`README.md`）。

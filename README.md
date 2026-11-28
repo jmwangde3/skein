@@ -49,7 +49,7 @@ Skein v2 就是把这四样东西做成了 **1 个极轻的本地命令行小工
 
 ### 做不到（先说清楚，避免误会）
 
-* **不适合 5 分钟能做完的小事**：改一行错别字直接让 AI 改就行，没必要留锚点。
+* **小改动可直接做**：改一处错字等一次可完成、易重做且没有待交接决定的小改动，零次 Skein 专用调用。
 
 * **不跨电脑自动云同步**：设计目标就是单机纯离线、数据不上传。
 
@@ -162,7 +162,7 @@ skein-cli init --workspace "D:/work/老项目" --data "D:/skein-data" --adopt-ex
 | 场景 | 你对 AI 说什么 | 背后会自动发生什么 | 
 | ----- | ----- | ----- | 
 | 日常干活 | 正常提需求 | AI 动第一笔代码前跑 1 条 `skein-cli mark` 留 3 行小纸条；推翻方案或排除死路时补 1 行 `note`，不写长篇日记 | 
-| 换个 AI 接着干 | 打开另一个 AI，只说一句：**“接手”** | B 跑 1 条 `skein-cli resume`，拉齐档案卡 + Git 现场 + 小纸条 + 近期会话；只有 1 个未完任务直接开干，多个先列清单问你 | 
+| 换个 AI 接着干 | 打开另一个 AI，只说“接手” | `skein-cli resume` 给出当前项目档案、Git 现场及任务简报。唯一任务直接恢复，多任务先选。`resume --full` 可展开完整锚点。 |
 | 原 AI 返场（A→B→A） | 回到 A，说：**“接手”** | A 同样重跑 `skein-cli resume`，不凭旧记忆盲做 | 
 | 查大项目历史资料 | 先打开 `kb-retrieval`，问：**“以前为什么定这个方案？”** | 按 索引 → 关键词 → `ai-memory` → `qmd` 顺序抽页，命中即停 | 
 | 两个 AI 同时干活 | 先打开 `agent-collab`，说：**“分成两个并行任务”** 或 **“你只读审查，A 负责改代码”** | 独立并行自动开独立目录/分支；实时配合锁定单写者 + 只读观察者；干完合并后提醒你关掉 `agent-collab` | 
@@ -198,7 +198,7 @@ Codex 默认跳过未信任的非托管 hook。在已信任的项目目录打开
 
 ### 接手时看到 `[WARN_BG_ACTIVE]`？
 
-说明检测到当前目录存在 `.git/index.lock`、相关后台进程，或者最近 10 秒内刚有文件被改动。先确认是不是前一个助手还有命令没跑完，决定等它跑完或终止后再让新助手写。
+Git 报告当前工作树有索引锁，或两次采样之间文件仍在变化。先核查锁归属、进程和产物，冲突仍在时再决定是否等待。可选 Python 采样只检查 Git 状态前 30 项中的近期改动，忽略项和间歇写入仍需结合已知后台命令核对。
 
 ### 新项目跑 `skein-cli check --strict` 会因为 `ai-memory` 没记录报错吗？
 
@@ -213,9 +213,9 @@ skein/
 ├── install/               Windows（PowerShell）与 macOS/Linux（Bash）安装脚本
 ├── templates/             全局规则模板（贴进客户端全局规则用）
 ├── docs/                  requirements.md（纯净需求稿）与 design.md（设计推导）
-├── tests/smoke-test.sh    12 项自动化冒烟测试（bash tests/smoke-test.sh）
+├── tests/smoke-test.sh    自动化冒烟测试（bash tests/smoke-test.sh）
 └── LICENSE                MIT License
 
 ```
 
-快速自检：`bash tests/smoke-test.sh`，看到 `全部 12 项冒烟测试通过！` 即表示本机脚本运行完全正常。
+快速自检：`bash tests/smoke-test.sh`，看到脚本汇报所有冒烟项通过 即表示本机脚本运行完全正常。

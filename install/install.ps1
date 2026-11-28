@@ -36,7 +36,32 @@ function Install-One([string]$dest, [string]$s) {
         return
     }
     if (-not (Test-Path -LiteralPath $dest)) { New-Item -ItemType Directory -Path $dest -Force | Out-Null }
-    Copy-Item -LiteralPath $source -Destination $target -Recurse -Force
+    if (-not $existing) {
+        Copy-Item -LiteralPath $source -Destination $target -Recurse
+    } else {
+        $parent = (Get-Item -LiteralPath $dest).FullName
+        $sourcePath = (Get-Item -LiteralPath $source).FullName
+        if ($existing.FullName -eq $sourcePath -or $existing.FullName.StartsWith($sourcePath + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "安装目标与源目录重叠：$target"
+        }
+        $suffix = [Guid]::NewGuid().ToString('N')
+        $stage = Join-Path $parent ".$s.new.$suffix"
+        $backup = Join-Path $parent ".$s.old.$suffix"
+        foreach ($path in @($existing.FullName, $stage, $backup)) {
+            if ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($path)) -ne $parent) {
+                throw "安装目标超出客户端技能目录：$path"
+            }
+        }
+        Copy-Item -LiteralPath $source -Destination $stage -Recurse
+        Rename-Item -LiteralPath $existing.FullName -NewName ([IO.Path]::GetFileName($backup))
+        try {
+            Rename-Item -LiteralPath $stage -NewName $s
+        } catch {
+            Rename-Item -LiteralPath $backup -NewName $s
+            throw
+        }
+        Remove-Item -LiteralPath $backup -Recurse -Force
+    }
     Write-Host "  已装：$target"
 }
 

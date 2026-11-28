@@ -19,8 +19,9 @@ description: 双 Agent 同时在同一项目上协作时启用（支持独立子
 1. **任务认领（有 `kanban-md` 时用它防撞车）**：
    ```bash
    kanban-md add "子任务 A" --dir "$BOARD"
-   kanban-md pick --claim --dir "$BOARD" --compact
+   kanban-md pick --claim "<当前助手的唯一名称>" --dir "$BOARD" --compact
    ```
+   每位助手在本次协作中使用固定且互异的认领名。首次使用任务板先按 `kanban-md init --help` 完成初始化。
    （未装 `kanban-md` 时，各自用独立任务 ID 与分支名隔离。）
 2. **一键开独立工作树**（一任务一目录一分支）：
    ```bash

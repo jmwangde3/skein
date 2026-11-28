@@ -2,7 +2,7 @@
 
 | 现场特征 | 动作 | 禁止 |
 |---|---|---|
-| `[WARN_BG_ACTIVE]` 或 `.git/index.lock` 存在 | 立即停写，汇报进程/锁状态与已有产物，问用户等待还是终止 | 擅自删锁或覆盖写入 |
+| 当前工作树出现 `[WARN_BG_ACTIVE]` 或已知后台命令可能仍在写 | 核查真实锁、进程和产物，存在持续冲突时再问用户等待还是终止 | 擅自删锁或覆盖写入 |
 | `TASK_ANCHOR: MULTIPLE` | 列出全部未完任务 ID 与目标，让用户选择 | 自行猜测或合并任务 |
 | `TASK_ANCHOR: NONE` 但工作树有未提交改动 | 结合 `git diff` + `ai-memory`（或 `cass`）摘要重建 6 项清单，不确定处先问用户 | 执行 `git clean` 或 `git checkout -- .` |
 | `PROJECT_BRIEF: MISSING` | 只对当前子仓做最小摸底（README + 入口 2 层），不开全仓通读 | 读取其他无关子仓档案 |
