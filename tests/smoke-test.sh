@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Skein v2.0.6 自动化冒烟测试（覆盖接手包完整性、老库收编、ai-memory 正常/失败显错与 BOM 校验）
+# Skein v2.0.7 自动化冒烟测试（覆盖接手包完整性、老库收编、ai-memory 正常/失败显错与 BOM 校验）
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -247,6 +247,49 @@ if grep -rnE "H:\\\\AI工作区|sync-agent-memory\.ps1|--agent codex|60%–75%|6
   fail "检测到残留个人硬编码或过时规则"
 fi
 ok "无个人硬编码路径与过时规则残留"
+
+# 17. 已有 AGENTS.local.md 且不传 --data 时，init --adopt-existing 沿用原 data_dir 不另建双库
+OLD_HOME="$HOME"
+export HOME="$TMP/fake_home"
+mkdir -p "$HOME"
+(cd "$WS" && "$CLI" init --adopt-existing >/dev/null)
+if [ -d "$HOME/skein-data" ]; then fail "init --adopt-existing 无视路由另建了默认库"; fi
+export HOME="$OLD_HOME"
+ok "已有路由不传 --data 时 init --adopt-existing 沿用原 data_dir 不建双库"
+
+# 18. 非 Git 多仓工作区根自动汇总子仓状态并列出已有子项目档案
+res_root="$(cd "$WS" && "$CLI" resume)"
+grep -q 'PROJECT_BRIEF: WORKSPACE_ROOT' <<< "$res_root" || fail "工作区根未列出已有子项目档案"
+grep -q 'sub-alpha.md' <<< "$res_root" || fail "工作区根未发现 sub-alpha.md 档案"
+grep -q 'sub-alpha | ' <<< "$res_root" || fail "工作区根未自动汇总子仓 Git 状态"
+ok "非 Git 多仓工作区根自动汇总子仓状态并展示子项目档案清单"
+
+# 19. 锚点显示 updated_at 与 note 时间戳，超 30 分钟输出 [STALE_ANCHOR]
+touch -d '2 hours ago' "$DATA/测试工作区/checkpoints/t-001.md" 2>/dev/null || python3 -c "import os,time; t=time.time()-7200; os.utime('$DATA/测试工作区/checkpoints/t-001.md',(t,t))"
+res_stale="$(cd "$WS/sub-alpha" && "$CLI" resume)"
+grep -q 'updated_at:' <<< "$res_stale" || fail "resume 未输出 updated_at"
+grep -q '\[STALE_ANCHOR\]' <<< "$res_stale" || fail "超 30 分钟锚点未输出 [STALE_ANCHOR]"
+grep -qE '\[[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}\]' <<< "$res_stale" || fail "简报丢弃了 note 时间戳"
+ok "锚点时效提示（updated_at + [STALE_ANCHOR] + note 时间戳）通过"
+
+# 20. 可选 probe_cmd 与 ai-memory 404 时自动降级 cass sessions
+printf '\nprobe_cmd: echo "PROBE_OK chrome=0"\n' >> "$WS/AGENTS.local.md"
+cat > "$TMP/mockbin/ai-memory" <<'EOF'
+#!/usr/bin/env bash
+echo 'Error: GET /admin/recent: server returned 404 Not Found' >&2
+exit 1
+EOF
+cat > "$TMP/mockbin/cass" <<'EOF'
+#!/usr/bin/env bash
+echo '{"sessions":[{"id":"cass-001","agent":"codex"}]}'
+exit 0
+EOF
+chmod +x "$TMP/mockbin/ai-memory" "$TMP/mockbin/cass"
+res_fb="$(cd "$WS/sub-alpha" && "$CLI" resume)"
+grep -q 'PROBE_OK chrome=0' <<< "$res_fb" || fail "probe_cmd 未执行或未输出"
+grep -q 'EXTERNAL_CAPTURE_FALLBACK: cass' <<< "$res_fb" || fail "ai-memory 404 未降级 cass"
+grep -q 'cass-001' <<< "$res_fb" || fail "cass sessions 输出缺失"
+ok "可选项目探针 probe_cmd 与 ai-memory 404 自动降级 cass 通过"
 
 # 13. 技能 references 引用完整性校验（防止悬空引用）
 for sk in "$ROOT"/skills/*/SKILL.md; do

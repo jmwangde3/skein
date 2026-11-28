@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.0.7 (2026-11-29 · 接手包补全区 + 项目探针 + cass 降级)
+
+- 修复非 Git 多仓工作区根 `resume` 盲区：自动汇总 `INDEX.md` 子仓与 `worktrees/` 的分支/HEAD/脏净，并列出已有子项目档案清单。
+- 修复 `init --adopt-existing` 不传 `--data` 时无视已有 `AGENTS.local.md` 另建默认双库的 Bug。
+- `resume` 输出锚点 `updated_at` 距今时长、保留 `note` 时间戳，超过 30 分钟自动标 `[STALE_ANCHOR]`。
+- 新增可选项目探针 `probe_cmd`（`AGENTS.local.md`），且 `ai-memory recent` 为空或 404 时自动降级调用 `cass sessions --workspace ... --json --limit 3`。
+
 ## v2.0.6 (2026-11-28 · 接手简报精炼 + mark 语义保留 + 短任务免维护)
 
 - 重复 `mark` 保留语义记录，linked worktree 单独绑定任务并复用原项目档案。默认接手简报展示最新目标，可用 `resume --full` 展开。

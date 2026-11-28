@@ -6,7 +6,7 @@
 set -euo pipefail
 shopt -s nullglob
 
-VERSION="2.0.5"
+VERSION="2.0.7"
 
 die() { printf '[SKEIN_ERR] %s\n' "$*" >&2; exit 2; }
 gap() { printf '[HANDOFF_GAP] %s\n' "$*" >&2; exit 1; }
@@ -73,6 +73,7 @@ load_route() {
   WT_ROOT="$(kv "$LOCAL" worktree_root || true)"
   BOARD="$(kv "$LOCAL" board || true)"
   GLOBAL_KB="$(kv "$LOCAL" global_kb || true)"
+  PROBE_CMD="$(kv "$LOCAL" probe_cmd || true)"
   [ -n "$CKPT" ] && [ -n "$KB" ] && [ -n "$WT_ROOT" ] || gap "$LOCAL 缺少必需键（checkpoints / kb / worktree_root）"
 }
 
@@ -271,14 +272,26 @@ EOF
     gap "请先与用户确认子路由去留，本命令不自动删除"
   fi
 
-  [ -n "$data_home" ] || data_home="$HOME/skein-data"
-  mkdir -p "$data_home" || gap "无法创建数据家：$data_home"
-  data_home="$(cd "$data_home" && pwd -P)"
+  local existing_local="$scope/AGENTS.local.md" d=""
+  if [ -z "$data_home" ] && [ -f "$existing_local" ]; then
+    local routed_dir
+    routed_dir="$(kv "$existing_local" data_dir || true)"
+    if [ -n "$routed_dir" ]; then
+      mkdir -p "$routed_dir" || gap "无法访问路由中的 data_dir：$routed_dir"
+      d="$(cd "$routed_dir" && pwd -P)"
+      data_home="$(dirname "$d")"
+    fi
+  fi
+  if [ -z "$d" ]; then
+    [ -n "$data_home" ] || data_home="$HOME/skein-data"
+    mkdir -p "$data_home" || gap "无法创建数据家：$data_home"
+    data_home="$(cd "$data_home" && pwd -P)"
+    d="$data_home/$name"
+  fi
   if git -C "$data_home" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     gap "数据家 $(wp "$data_home") 位于 Git 工作树内，私有数据可能被提交"
   fi
 
-  local d="$data_home/$name"
   local marker="$d/.skein-scope"
   if [ -f "$marker" ]; then
     local owner
@@ -543,26 +556,87 @@ anchor_view() {
   awk -v mode="$1" '
     /^## [1-6]\. / { section = substr($0, 4, 1) + 0; title[section] = $0; next }
     section && /^- / {
-      value = substr($0, 3)
-      sub(/^\[[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]\] /, "", value)
+      raw = substr($0, 3)
+      clean = raw
+      sub(/^\[[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]\] /, "", clean)
       n = ++count[section]
-      recent[section, n % 3] = value
+      recent_raw[section, n % 3] = raw
+      recent_clean[section, n % 3] = clean
     }
     END {
-      if (mode == "goal") { print recent[1, count[1] % 3]; exit }
+      if (mode == "goal") { print recent_clean[1, count[1] % 3]; exit }
       for (s = 1; s <= 6; s++) {
         print title[s]
         keep = (s == 1 || s == 6) ? 1 : 3
         first = count[s] > keep ? count[s] - keep + 1 : 1
         if (first > 1) print "  （另有 " (first - 1) " 条历史记录，resume --full 查看）"
         for (i = first; i <= count[s]; i++) {
-          value = recent[s, i % 3]
+          value = recent_raw[s, i % 3]
           if (length(value) > 240) value = substr(value, 1, 240) "…（--full）"
           print "- " value
         }
       }
     }
   ' "$2"
+}
+
+anchor_freshness() {
+  local file="$1" updated py=""
+  updated="$(kv "$file" updated_at || true)"
+  [ -n "$updated" ] || return 0
+  if command -v python3 >/dev/null 2>&1; then py=python3
+  elif command -v python >/dev/null 2>&1; then py=python; fi
+  if [ -n "$py" ]; then
+    "$py" - "$file" "$updated" <<'PY' 2>/dev/null || printf 'updated_at: %s\n' "$updated"
+import os, sys, time
+path, updated = sys.argv[1], sys.argv[2]
+age = max(0, int(time.time() - os.path.getmtime(path)))
+if age < 60:
+    label = f"{age} 秒前"
+elif age < 3600:
+    label = f"{age // 60} 分钟前"
+else:
+    label = f"{age // 3600} 小时 {(age % 3600) // 60} 分钟前"
+print(f"updated_at: {updated}（约 {label}）")
+if age >= 1800:
+    print("[STALE_ANCHOR] 锚点已超过 30 分钟未更新，下一步可能已过时，请以 Git 现场、探针与外部会话为准。")
+PY
+  else
+    printf 'updated_at: %s\n' "$updated"
+  fi
+}
+
+# 非 Git 多仓工作区根：自动汇总登记的子仓及 worktrees 状态
+workspace_subrepos_live() {
+  local idx="$KB/facts/projects/INDEX.md" found=0 seen="" rel full br sha st
+  local candidates=()
+  if [ -f "$idx" ]; then
+    while IFS= read -r rel; do
+      [ -n "$rel" ] && [ "$rel" != "." ] && candidates+=("$rel")
+    done < <(awk -F'|' '/^\| `/ { gsub(/^[[:space:]`]+|[[:space:]`]+$/, "", $3); if ($3 != "") print $3 }' "$idx")
+  fi
+  local d
+  for d in "$SCOPE"/worktrees/*/; do
+    [ -d "$d" ] || continue
+    rel="${d#"$SCOPE"/}"; rel="${rel%/}"
+    candidates+=("$rel")
+  done
+  for rel in "${candidates[@]}"; do
+    case $'\n'"$seen"$'\n' in *$'\n'"$rel"$'\n'*) continue ;; esac
+    seen="${seen}${seen:+$'\n'}${rel}"
+    full="$SCOPE/$rel"
+    is_repo_root "$full" || continue
+    found=1
+    br="$(git -C "$full" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unborn)"
+    sha="$(git -C "$full" rev-parse --short HEAD 2>/dev/null || echo unborn)"
+    if [ -n "$(git -C "$full" status --porcelain 2>/dev/null || true)" ]; then
+      st="dirty"
+    else
+      st="clean"
+    fi
+    say "- $rel | $br | $sha | $st"
+  done
+  [ "$found" -eq 1 ] || say "not_a_git_repo（且未在 INDEX.md 或 worktrees/ 中发现子仓）"
 }
 
 cmd_mark() {
@@ -742,6 +816,21 @@ cmd_resume() {
   if [ -f "$brief" ]; then
     say "--- PROJECT_BRIEF ($(wp "$brief")) ---"
     cat "$brief"
+  elif [ -z "$REPO" ] && [ -d "$KB/facts/projects" ]; then
+    local sub_briefs=() bf
+    for bf in "$KB/facts/projects"/*.md; do
+      [ -f "$bf" ] || continue
+      [ "$(basename "$bf")" = "INDEX.md" ] && continue
+      sub_briefs+=("$(basename "$bf")")
+    done
+    if [ "${#sub_briefs[@]}" -gt 0 ]; then
+      say "--- PROJECT_BRIEF: WORKSPACE_ROOT (工作区根非 Git 仓；已有子项目档案请按需单读) ---"
+      for bf in "${sub_briefs[@]}"; do
+        say "- $(wp "$KB/facts/projects/$bf")"
+      done
+    else
+      say "--- PROJECT_BRIEF: MISSING (当前工作区及子仓均未建最小档案；老库请跑 skein-cli init --adopt-existing 后补档) ---"
+    fi
   else
     say "--- PROJECT_BRIEF: MISSING (当前子仓尚未建最小档案；老库请跑 skein-cli init --adopt-existing 后补档) ---"
   fi
@@ -764,7 +853,8 @@ cmd_resume() {
     say "recent_commits:"
     git -C "$REPO" log -n 5 --oneline 2>/dev/null || say "(尚无提交)"
   else
-    say "not_a_git_repo"
+    say "workspace_root_not_git: 汇总子仓与 worktrees 状态"
+    workspace_subrepos_live
   fi
 
   say ""
@@ -775,6 +865,7 @@ cmd_resume() {
     say "--- TASK_ANCHOR: NONE (无显式任务锚点，请结合 ai-memory/Git 现场重建) ---"
   elif [ "${#MATCHES[@]}" -eq 1 ]; then
     say "--- TASK_ANCHOR: SINGLE ($(basename "${MATCHES[0]}" .md)) ---"
+    anchor_freshness "${MATCHES[0]}"
     if [ "$full" -eq 1 ]; then cat "${MATCHES[0]}"; else anchor_view compact "${MATCHES[0]}"; fi
   else
     say "--- TASK_ANCHOR: MULTIPLE (${#MATCHES[@]} 个未完任务，请先列清单问用户选哪项) ---"
@@ -786,8 +877,23 @@ cmd_resume() {
     done
   fi
 
-  # 外部自动留痕读取：调用经过核验的 `ai-memory recent`（在项目 cwd 下执行，绝不静默吞错）
+  # 可选项目只读探针（在 AGENTS.local.md 配置 probe_cmd，接手时自动带出 Chrome/broker/最新报告等专属现场）
+  if [ -n "${PROBE_CMD:-}" ]; then
+    say ""
+    say "--- PROJECT_PROBE ---"
+    local probe_out="" probe_rc=0
+    probe_out="$(cd "$SCOPE" && bash -c "$PROBE_CMD" 2>&1)" || probe_rc=$?
+    if [ "$probe_rc" -eq 0 ]; then
+      printf '%s\n' "$probe_out" | sed -n '1,25p'
+    else
+      say "[WARN_PROBE] probe_cmd 执行失败（exit $probe_rc）："
+      printf '%s\n' "$probe_out" | sed -n '1,5p'
+    fi
+  fi
+
+  # 外部自动留痕读取：优先 ai-memory recent；若为空/404 且装有 cass，自动降级拉取 cass sessions
   say ""
+  local need_cass=0
   if command -v ai-memory >/dev/null 2>&1; then
     say "--- EXTERNAL_CAPTURE: ai-memory (recent) ---"
     local aim_out="" aim_rc=0
@@ -796,17 +902,32 @@ cmd_resume() {
       printf '%s\n' "$aim_out" | sed -n '1,30p'
     elif [ "$aim_rc" -eq 0 ]; then
       say "(ai-memory 正常响应，当前项目暂无近期捕获页)"
+      need_cass=1
     elif printf '%s' "$aim_out" | grep -qiE '404 Not Found|not found in workspace'; then
       say "(ai-memory 服务在线，当前项目尚未产生首次捕获记录)"
+      need_cass=1
     else
       say "[WARN_EXTERNAL_CAPTURE] ai-memory recent 执行失败（exit $aim_rc）："
       printf '%s\n' "$aim_out" | grep -iE 'error|fail|refused|denied' | head -n 5 || printf '%s\n' "$aim_out" | tail -n 5
+      need_cass=1
     fi
-  elif command -v cass >/dev/null 2>&1; then
-    say "--- EXTERNAL_CAPTURE: cass (fallback detected) ---"
-    say "如需回看中断前未落盘的最后几轮探索，可按需运行 cass 搜索当前目录近期会话。"
   else
-    say "--- EXTERNAL_CAPTURE: none (仅依靠任务锚点 + Git 现场) ---"
+    need_cass=1
+  fi
+
+  if [ "$need_cass" -eq 1 ]; then
+    if command -v cass >/dev/null 2>&1; then
+      say "--- EXTERNAL_CAPTURE_FALLBACK: cass (sessions) ---"
+      local cass_out="" cass_rc=0
+      cass_out="$(cass sessions --workspace "$(wp "${REPO:-$PWD}")" --json --limit 3 2>&1)" || cass_rc=$?
+      if [ "$cass_rc" -eq 0 ] && [ -n "$cass_out" ]; then
+        printf '%s\n' "$cass_out" | sed -n '1,25p'
+      else
+        say "[WARN_CASS] cass sessions 执行失败（exit $cass_rc）：$(printf '%s' "$cass_out" | head -n 1)"
+      fi
+    elif ! command -v ai-memory >/dev/null 2>&1; then
+      say "--- EXTERNAL_CAPTURE: none (仅依靠任务锚点 + Git 现场) ---"
+    fi
   fi
 
   if command -v kanban-md >/dev/null 2>&1 && [ -f "$BOARD/config.yml" ]; then
@@ -955,7 +1076,7 @@ case "$SUB" in
   -v|--version) say "skein-cli $VERSION" ;;
   -h|--help|help)
     cat <<'EOF'
-skein-cli v2.0.6 — Skein 机械操作单命令封装层
+skein-cli v2.0.7 — Skein 机械操作单命令封装层
 
 子命令：
   init       初始化工作区、路由、离线知识库与档案索引（--trae 生成 TRAE 规则；--adopt-existing 收编老库）
