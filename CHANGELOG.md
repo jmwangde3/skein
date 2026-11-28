@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.0.8 (2026-11-29 · resume 前自动冲刷 hook spool)
+
+- `cmd_resume` 在读取 `ai-memory recent` 之前执行一次 `ai-memory recover`（失败静默），把客户端 hook 积压的本地 spool 刷进 server。
+- 背景：ai-memory 3.6.3 在 Windows 上 `hook-drain` 报 `breakaway spawn failed with access denied` 且不带认证，事件只落 spool；`recover` 可正常送达。
+
 ## v2.0.7 (2026-11-29 · 接手包补全区 + 项目探针 + cass 降级)
 
 - 修复非 Git 多仓工作区根 `resume` 盲区：自动汇总 `INDEX.md` 子仓与 `worktrees/` 的分支/HEAD/脏净，并列出已有子项目档案清单。

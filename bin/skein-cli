@@ -6,7 +6,7 @@
 set -euo pipefail
 shopt -s nullglob
 
-VERSION="2.0.7"
+VERSION="2.0.8"
 
 die() { printf '[SKEIN_ERR] %s\n' "$*" >&2; exit 2; }
 gap() { printf '[HANDOFF_GAP] %s\n' "$*" >&2; exit 1; }
@@ -893,6 +893,10 @@ cmd_resume() {
 
   # 外部自动留痕读取：优先 ai-memory recent；若为空/404 且装有 cass，自动降级拉取 cass sessions
   say ""
+  # 接手前冲刷本地 hook spool，确保 ai-memory recent 读到最新事件（hook-drain 401 时靠这步兜底）
+  if command -v ai-memory >/dev/null 2>&1; then
+    ai-memory recover >/dev/null 2>&1 || true
+  fi
   local need_cass=0
   if command -v ai-memory >/dev/null 2>&1; then
     say "--- EXTERNAL_CAPTURE: ai-memory (recent) ---"
@@ -1076,7 +1080,7 @@ case "$SUB" in
   -v|--version) say "skein-cli $VERSION" ;;
   -h|--help|help)
     cat <<'EOF'
-skein-cli v2.0.7 — Skein 机械操作单命令封装层
+skein-cli v2.0.8 — Skein 机械操作单命令封装层
 
 子命令：
   init       初始化工作区、路由、离线知识库与档案索引（--trae 生成 TRAE 规则；--adopt-existing 收编老库）
